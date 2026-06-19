@@ -46,6 +46,7 @@ public sealed class ExperimentsController : ControllerBase
         if (experiment is null)
         {
             return NotFound($"Experiment '{id}' was not found.");
+            
         }
 
         return Ok(experiment);
