@@ -29,6 +29,24 @@ public sealed class WorkersController : ControllerBase
         return Ok(worker);
     }
 
+    [HttpPost("{workerId}/heartbeat")]
+    public ActionResult<WorkerStatusResponse> Heartbeat(string workerId)
+    {
+        if (string.IsNullOrWhiteSpace(workerId))
+        {
+            return BadRequest("WorkerId is required.");
+        }
+
+        var worker = _workerRegistry.Heartbeat(workerId);
+
+        if (worker is null)
+        {
+            return NotFound($"Worker '{workerId}' is not registered.");
+        }
+
+        return Ok(worker);
+    }
+
     [HttpGet]
     public ActionResult<IReadOnlyCollection<WorkerStatusResponse>> GetAll()
     {

@@ -7,41 +7,82 @@ public sealed class WorkerService(
     ILogger<WorkerService> logger,
     IHttpClientFactory httpClientFactory) : BackgroundService
 {
+    private const string WorkerId = "worker-1";
+
+    private const string CoordinatorBaseUrl =
+        "http://localhost:5031";
+
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
         var client = httpClientFactory.CreateClient();
 
-        var request = new WorkerRegistrationRequest
+        var registrationRequest = new WorkerRegistrationRequest
         {
-            WorkerId = "worker-1"
+            WorkerId = WorkerId
         };
 
         try
         {
-            var response = await client.PostAsJsonAsync(
-                "http://localhost:5031/api/workers/register",
-                request,
+            var registrationResponse = await client.PostAsJsonAsync(
+                $"{CoordinatorBaseUrl}/api/workers/register",
+                registrationRequest,
                 stoppingToken);
 
-            response.EnsureSuccessStatusCode();
+            registrationResponse.EnsureSuccessStatusCode();
 
             logger.LogInformation(
                 "Worker {WorkerId} successfully registered.",
-                request.WorkerId);
+                WorkerId);
         }
         catch (Exception exception)
         {
             logger.LogError(
                 exception,
                 "Worker registration failed.");
+
+            return;
         }
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            await Task.Delay(
-                TimeSpan.FromSeconds(10),
-                stoppingToken);
+            try
+            {
+                var heartbeatResponse = await client.PostAsync(
+                    $"{CoordinatorBaseUrl}/api/workers/{WorkerId}/heartbeat",
+                    content: null,
+                    stoppingToken);
+
+                heartbeatResponse.EnsureSuccessStatusCode();
+
+                logger.LogInformation(
+                    "Heartbeat sent by {WorkerId}.",
+                    WorkerId);
+            }
+            catch (OperationCanceledException)
+                when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Heartbeat failed for {WorkerId}.",
+                    WorkerId);
+            }
+
+            try
+            {
+                await Task.Delay(
+                    TimeSpan.FromSeconds(5),
+                    stoppingToken);
+            }
+            catch (OperationCanceledException)
+                when (stoppingToken.IsCancellationRequested)
+            {
+                break;
+            }
         }
     }
 }

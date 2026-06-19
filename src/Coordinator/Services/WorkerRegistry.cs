@@ -5,24 +5,66 @@ namespace Coordinator.Services;
 
 public sealed class WorkerRegistry
 {
-    private readonly ConcurrentDictionary<string, WorkerStatusResponse> _workers = new();
+    private static readonly TimeSpan OnlineTimeout =
+        TimeSpan.FromSeconds(15);
+
+    private readonly ConcurrentDictionary<string, WorkerStatusResponse> _workers =
+        new();
 
     public WorkerStatusResponse Register(string workerId)
     {
-        var worker = new WorkerStatusResponse
+        var now = DateTimeOffset.UtcNow;
+
+        return _workers.AddOrUpdate(
+            workerId,
+            _ => new WorkerStatusResponse
+            {
+                WorkerId = workerId,
+                RegisteredAtUtc = now,
+                LastHeartbeatAtUtc = now,
+                IsOnline = true
+            },
+            (_, existingWorker) => new WorkerStatusResponse
+            {
+                WorkerId = existingWorker.WorkerId,
+                RegisteredAtUtc = existingWorker.RegisteredAtUtc,
+                LastHeartbeatAtUtc = now,
+                IsOnline = true
+            });
+    }
+
+    public WorkerStatusResponse? Heartbeat(string workerId)
+    {
+        if (!_workers.TryGetValue(workerId, out var existingWorker))
         {
-            WorkerId = workerId,
-            RegisteredAtUtc = DateTimeOffset.UtcNow
+            return null;
+        }
+
+        var updatedWorker = new WorkerStatusResponse
+        {
+            WorkerId = existingWorker.WorkerId,
+            RegisteredAtUtc = existingWorker.RegisteredAtUtc,
+            LastHeartbeatAtUtc = DateTimeOffset.UtcNow,
+            IsOnline = true
         };
 
-        _workers[workerId] = worker;
+        _workers[workerId] = updatedWorker;
 
-        return worker;
+        return updatedWorker;
     }
 
     public IReadOnlyCollection<WorkerStatusResponse> GetAll()
     {
+        var now = DateTimeOffset.UtcNow;
+
         return _workers.Values
+            .Select(worker => new WorkerStatusResponse
+            {
+                WorkerId = worker.WorkerId,
+                RegisteredAtUtc = worker.RegisteredAtUtc,
+                LastHeartbeatAtUtc = worker.LastHeartbeatAtUtc,
+                IsOnline = now - worker.LastHeartbeatAtUtc <= OnlineTimeout
+            })
             .OrderBy(worker => worker.WorkerId)
             .ToArray();
     }
