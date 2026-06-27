@@ -7,6 +7,9 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddSingleton<WorkerRegistry>();
 builder.Services.AddSingleton<ExperimentRegistry>();
+
+
+
 builder.Services.AddOpenApi();
 
 var app = builder.Build();
