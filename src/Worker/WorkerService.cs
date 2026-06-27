@@ -56,7 +56,7 @@ public sealed class WorkerService(
 
                 heartbeatResponse.EnsureSuccessStatusCode();
 
-                logger.LogInformation(
+                logger.LogDebug(
                     "Heartbeat sent by {WorkerId}.",
                     WorkerId);
             }

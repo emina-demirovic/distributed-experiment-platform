@@ -70,6 +70,24 @@ public sealed class WorkerRegistry
             })
             .FirstOrDefault();
     }
+
+    public IReadOnlyCollection<WorkerStatusResponse> GetOnlineWorkers()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        return _workers.Values
+            .Where(worker =>
+                now - worker.LastHeartbeatAtUtc <= OnlineTimeout)
+            .OrderBy(worker => worker.WorkerId)
+            .Select(worker => new WorkerStatusResponse
+            {
+                WorkerId = worker.WorkerId,
+                RegisteredAtUtc = worker.RegisteredAtUtc,
+                LastHeartbeatAtUtc = worker.LastHeartbeatAtUtc,
+                IsOnline = true
+            })
+            .ToArray();
+    }
     
     public IReadOnlyCollection<WorkerStatusResponse> GetAll()
     {

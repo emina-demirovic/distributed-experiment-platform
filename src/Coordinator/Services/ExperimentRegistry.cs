@@ -138,4 +138,20 @@ public sealed class ExperimentRegistry
         }
     }
     
+    public ExperimentResponse? GetNextPending()
+    {
+        return _experiments.Values
+            .Where(experiment =>
+                experiment.Status == ExperimentStatus.Pending)
+            .OrderBy(experiment => experiment.CreatedAtUtc)
+            .FirstOrDefault();
+    }
+
+    public bool HasRunningExperiment(string workerId)
+    {
+        return _experiments.Values.Any(experiment =>
+            experiment.Status == ExperimentStatus.Running &&
+            experiment.AssignedWorkerId == workerId);
+    }
+    
 }
