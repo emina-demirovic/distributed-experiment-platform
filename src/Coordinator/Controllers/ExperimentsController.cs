@@ -9,10 +9,13 @@ namespace Coordinator.Controllers;
 public sealed class ExperimentsController : ControllerBase
 {
     private readonly ExperimentRegistry _experimentRegistry;
+    private readonly WorkerRegistry _workerRegistry;
 
-    public ExperimentsController(ExperimentRegistry experimentRegistry)
+
+    public ExperimentsController(ExperimentRegistry experimentRegistry, WorkerRegistry workerRegistry)
     {
         _experimentRegistry = experimentRegistry;
+        _workerRegistry = workerRegistry;
     }
 
     [HttpPost]
@@ -50,5 +53,42 @@ public sealed class ExperimentsController : ControllerBase
         }
 
         return Ok(experiment);
+    }
+
+    [HttpPost("{id:guid}/assign")]
+    public ActionResult<ExperimentResponse> Assign(Guid id)
+    {
+        var existingExperiment = _experimentRegistry.GetById(id);
+
+        if (existingExperiment is null)
+        {
+            return NotFound($"Experiment '{id}' was not found.");
+        }
+
+        if (existingExperiment.Status != ExperimentStatus.Pending)
+        {
+            return Conflict(
+                $"Experiment '{id}' cannot be assigned because its status is " +
+                $"'{existingExperiment.Status}'.");
+        }
+
+        var worker = _workerRegistry.GetFirstOnline();
+
+        if (worker is null)
+        {
+            return Conflict("No online worker is currently available.");
+        }
+
+        var assigned = _experimentRegistry.TryAssign(
+            id,
+            worker.WorkerId,
+            out var assignedExperiment);
+
+        if (!assigned || assignedExperiment is null)
+        {
+            return Conflict($"Experiment '{id}' could not be assigned.");
+        }
+
+        return Ok(assignedExperiment);
     }
 }

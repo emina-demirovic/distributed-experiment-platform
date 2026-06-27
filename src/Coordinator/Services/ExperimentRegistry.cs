@@ -35,4 +35,45 @@ public sealed class ExperimentRegistry
     {
         return _experiments.GetValueOrDefault(id);
     }
+
+    public bool TryAssign(
+        Guid id,
+        string workerId,
+        out ExperimentResponse? assignedExperiment)
+    {
+        while (true)
+        {
+            if (!_experiments.TryGetValue(id, out var existingExperiment))
+            {
+                assignedExperiment = null;
+                return false;
+            }
+
+            if (existingExperiment.Status != ExperimentStatus.Pending)
+            {
+                assignedExperiment = existingExperiment;
+                return false;
+            }
+
+            var updatedExperiment = new ExperimentResponse
+            {
+                Id = existingExperiment.Id,
+                Name = existingExperiment.Name,
+                Status = ExperimentStatus.Running,
+                CreatedAtUtc = existingExperiment.CreatedAtUtc,
+                AssignedWorkerId = workerId
+            };
+
+            if (_experiments.TryUpdate(
+                id,
+                updatedExperiment,
+                existingExperiment))
+            {
+                assignedExperiment = updatedExperiment;
+                return true;
+            }
+        }
+    }
+
+    
 }

@@ -53,6 +53,24 @@ public sealed class WorkerRegistry
         return updatedWorker;
     }
 
+    public WorkerStatusResponse? GetFirstOnline()
+    {
+        var now = DateTimeOffset.UtcNow;
+
+        return _workers.Values
+            .Where(worker =>
+                now - worker.LastHeartbeatAtUtc <= OnlineTimeout)
+            .OrderBy(worker => worker.WorkerId)
+            .Select(worker => new WorkerStatusResponse
+            {
+                WorkerId = worker.WorkerId,
+                RegisteredAtUtc = worker.RegisteredAtUtc,
+                LastHeartbeatAtUtc = worker.LastHeartbeatAtUtc,
+                IsOnline = true
+            })
+            .FirstOrDefault();
+    }
+    
     public IReadOnlyCollection<WorkerStatusResponse> GetAll()
     {
         var now = DateTimeOffset.UtcNow;
