@@ -116,6 +116,11 @@ public sealed class ExperimentsController : ControllerBase
             return BadRequest("WorkerId is required.");
         }
 
+        if (request.Attempt <= 0)
+        {
+            return BadRequest("A valid execution attempt is required.");
+        }
+
         var existingExperiment = _experimentRegistry.GetById(id);
 
         if (existingExperiment is null)
@@ -136,9 +141,18 @@ public sealed class ExperimentsController : ControllerBase
                 $"'{request.WorkerId}'.");
         }
 
+        if (existingExperiment.Attempt != request.Attempt)
+        {
+            return Conflict(
+                $"Experiment '{id}' is currently on attempt " +
+                $"{existingExperiment.Attempt}, but result for attempt " +
+                $"{request.Attempt} was received.");
+        }
+
         var completed = _experimentRegistry.TryComplete(
             id,
             request.WorkerId,
+            request.Attempt,
             request.Succeeded,
             request.ResultMessage,
             out var finishedExperiment);

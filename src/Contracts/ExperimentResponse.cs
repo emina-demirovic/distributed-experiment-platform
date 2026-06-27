@@ -17,4 +17,7 @@ public sealed class ExperimentResponse
     public string? ResultMessage { get; set; }
 
     public bool SimulateFailure { get; set; }
+
+    public int Attempt { get; set; }
+    
 }

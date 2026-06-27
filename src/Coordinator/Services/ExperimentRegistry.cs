@@ -19,7 +19,8 @@ public sealed class ExperimentRegistry
             CreatedAtUtc = DateTimeOffset.UtcNow,
             AssignedWorkerId = null,
             FinishedAtUtc = null,
-            ResultMessage = null
+            ResultMessage = null,
+            Attempt = 0
         };
 
         _experiments[experiment.Id] = experiment;
@@ -67,7 +68,8 @@ public sealed class ExperimentRegistry
                 AssignedWorkerId = workerId,
                 FinishedAtUtc = null,
                 ResultMessage = null,
-                SimulateFailure = existingExperiment.SimulateFailure
+                SimulateFailure = existingExperiment.SimulateFailure,
+                Attempt = existingExperiment.Attempt + 1
             };
 
             if (_experiments.TryUpdate(
@@ -94,6 +96,7 @@ public sealed class ExperimentRegistry
     public bool TryComplete(
         Guid id,
         string workerId,
+        int attempt,
         bool succeeded,
         string? resultMessage,
         out ExperimentResponse? finishedExperiment)
@@ -107,7 +110,8 @@ public sealed class ExperimentRegistry
             }
 
             if (existingExperiment.Status != ExperimentStatus.Running ||
-                existingExperiment.AssignedWorkerId != workerId)
+                existingExperiment.AssignedWorkerId != workerId || 
+                existingExperiment.Attempt != attempt)
             {
                 finishedExperiment = existingExperiment;
                 return false;
@@ -124,7 +128,8 @@ public sealed class ExperimentRegistry
                 AssignedWorkerId = existingExperiment.AssignedWorkerId,
                 FinishedAtUtc = DateTimeOffset.UtcNow,
                 ResultMessage = resultMessage,
-                SimulateFailure = existingExperiment.SimulateFailure
+                SimulateFailure = existingExperiment.SimulateFailure,
+                Attempt = existingExperiment.Attempt
             };
 
             if (_experiments.TryUpdate(
@@ -192,7 +197,8 @@ public sealed class ExperimentRegistry
                 AssignedWorkerId = null,
                 FinishedAtUtc = null,
                 ResultMessage = null,
-                SimulateFailure = existingExperiment.SimulateFailure
+                SimulateFailure = existingExperiment.SimulateFailure,
+                Attempt = existingExperiment.Attempt
             };
 
             if (_experiments.TryUpdate(
