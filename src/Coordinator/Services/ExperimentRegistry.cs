@@ -16,7 +16,9 @@ public sealed class ExperimentRegistry
             Name = name,
             Status = ExperimentStatus.Pending,
             CreatedAtUtc = DateTimeOffset.UtcNow,
-            AssignedWorkerId = null
+            AssignedWorkerId = null,
+            FinishedAtUtc = null,
+            ResultMessage = null
         };
 
         _experiments[experiment.Id] = experiment;
@@ -61,7 +63,9 @@ public sealed class ExperimentRegistry
                 Name = existingExperiment.Name,
                 Status = ExperimentStatus.Running,
                 CreatedAtUtc = existingExperiment.CreatedAtUtc,
-                AssignedWorkerId = workerId
+                AssignedWorkerId = workerId,
+                FinishedAtUtc = null,
+                ResultMessage = null
             };
 
             if (_experiments.TryUpdate(
@@ -75,5 +79,60 @@ public sealed class ExperimentRegistry
         }
     }
 
+    public ExperimentResponse? GetNextAssignedToWorker(string workerId)
+    {
+        return _experiments.Values
+            .Where(experiment =>
+                experiment.AssignedWorkerId == workerId &&
+                experiment.Status == ExperimentStatus.Running)
+            .OrderBy(experiment => experiment.CreatedAtUtc)
+            .FirstOrDefault();
+    }
+
+    public bool TryComplete(
+        Guid id,
+        string workerId,
+        bool succeeded,
+        string? resultMessage,
+        out ExperimentResponse? finishedExperiment)
+    {
+        while (true)
+        {
+            if (!_experiments.TryGetValue(id, out var existingExperiment))
+            {
+                finishedExperiment = null;
+                return false;
+            }
+
+            if (existingExperiment.Status != ExperimentStatus.Running ||
+                existingExperiment.AssignedWorkerId != workerId)
+            {
+                finishedExperiment = existingExperiment;
+                return false;
+            }
+
+            var updatedExperiment = new ExperimentResponse
+            {
+                Id = existingExperiment.Id,
+                Name = existingExperiment.Name,
+                Status = succeeded
+                    ? ExperimentStatus.Completed
+                    : ExperimentStatus.Failed,
+                CreatedAtUtc = existingExperiment.CreatedAtUtc,
+                AssignedWorkerId = existingExperiment.AssignedWorkerId,
+                FinishedAtUtc = DateTimeOffset.UtcNow,
+                ResultMessage = resultMessage
+            };
+
+            if (_experiments.TryUpdate(
+                id,
+                updatedExperiment,
+                existingExperiment))
+            {
+                finishedExperiment = updatedExperiment;
+                return true;
+            }
+        }
+    }
     
 }

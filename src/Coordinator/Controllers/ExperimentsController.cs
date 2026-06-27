@@ -91,4 +91,65 @@ public sealed class ExperimentsController : ControllerBase
 
         return Ok(assignedExperiment);
     }
+
+    [HttpGet("worker/{workerId}/next")]
+public ActionResult<ExperimentResponse> GetNextForWorker(string workerId)
+{
+    var experiment =
+        _experimentRegistry.GetNextAssignedToWorker(workerId);
+
+    if (experiment is null)
+    {
+        return NoContent();
+    }
+
+    return Ok(experiment);
+}
+
+    [HttpPost("{id:guid}/complete")]
+    public ActionResult<ExperimentResponse> Complete(
+        Guid id,
+        CompleteExperimentRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.WorkerId))
+        {
+            return BadRequest("WorkerId is required.");
+        }
+
+        var existingExperiment = _experimentRegistry.GetById(id);
+
+        if (existingExperiment is null)
+        {
+            return NotFound($"Experiment '{id}' was not found.");
+        }
+
+        if (existingExperiment.Status != ExperimentStatus.Running)
+        {
+            return Conflict(
+                $"Experiment '{id}' is not currently running.");
+        }
+
+        if (existingExperiment.AssignedWorkerId != request.WorkerId)
+        {
+            return Conflict(
+                $"Experiment '{id}' is not assigned to worker " +
+                $"'{request.WorkerId}'.");
+        }
+
+        var completed = _experimentRegistry.TryComplete(
+            id,
+            request.WorkerId,
+            request.Succeeded,
+            request.ResultMessage,
+            out var finishedExperiment);
+
+        if (!completed || finishedExperiment is null)
+        {
+            return Conflict(
+                $"Experiment '{id}' could not be completed.");
+        }
+
+        return Ok(finishedExperiment);
+    }
+    
 }

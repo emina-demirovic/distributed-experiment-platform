@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Net;
 using Contracts;
 
 namespace Worker;
@@ -70,6 +71,52 @@ public sealed class WorkerService(
                     exception,
                     "Heartbeat failed for {WorkerId}.",
                     WorkerId);
+            }
+
+            var nextExperimentResponse = await client.GetAsync(
+                $"{CoordinatorBaseUrl}/api/experiments/worker/{WorkerId}/next",
+                stoppingToken);
+
+            if (nextExperimentResponse.StatusCode != HttpStatusCode.NoContent)
+            {
+                nextExperimentResponse.EnsureSuccessStatusCode();
+
+                var experiment =
+                    await nextExperimentResponse.Content
+                        .ReadFromJsonAsync<ExperimentResponse>(
+                            cancellationToken: stoppingToken);
+
+                if (experiment is not null)
+                {
+                    logger.LogInformation(
+                        "Starting experiment {ExperimentId}: {ExperimentName}.",
+                        experiment.Id,
+                        experiment.Name);
+
+                    // Za sada „izvršavanje“ traje tri sekunde. 
+                    // Kasnije će taj deo zameniti poziv stvarnog RL procesa ili izvršnog modula.
+                    await Task.Delay(
+                        TimeSpan.FromSeconds(3),
+                        stoppingToken);
+
+                    var completionRequest = new CompleteExperimentRequest
+                    {
+                        WorkerId = WorkerId,
+                        Succeeded = true,
+                        ResultMessage = "Simulated execution completed successfully."
+                    };
+
+                    var completionResponse = await client.PostAsJsonAsync(
+                        $"{CoordinatorBaseUrl}/api/experiments/{experiment.Id}/complete",
+                        completionRequest,
+                        stoppingToken);
+
+                    completionResponse.EnsureSuccessStatusCode();
+
+                    logger.LogInformation(
+                        "Experiment {ExperimentId} completed successfully.",
+                        experiment.Id);
+                }
             }
 
             try
