@@ -7,8 +7,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddControllers();
 builder.Services.AddSingleton<WorkerRegistry>();
 builder.Services.AddSingleton<ExperimentRegistry>();
-
-
+builder.Services.AddHostedService<ExperimentSchedulerService>();
 
 builder.Services.AddOpenApi();
 
