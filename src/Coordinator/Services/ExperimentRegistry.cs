@@ -153,5 +153,57 @@ public sealed class ExperimentRegistry
             experiment.Status == ExperimentStatus.Running &&
             experiment.AssignedWorkerId == workerId);
     }
+
+    public IReadOnlyCollection<ExperimentResponse> GetRunning()
+    {
+        return _experiments.Values
+            .Where(experiment =>
+                experiment.Status == ExperimentStatus.Running)
+            .OrderBy(experiment => experiment.CreatedAtUtc)
+            .ToArray();
+    }
+
+    public bool TryRequeue(
+        Guid id,
+        string workerId,
+        out ExperimentResponse? requeuedExperiment)
+    {
+        while (true)
+        {
+            if (!_experiments.TryGetValue(id, out var existingExperiment))
+            {
+                requeuedExperiment = null;
+                return false;
+            }
+
+            if (existingExperiment.Status != ExperimentStatus.Running ||
+                existingExperiment.AssignedWorkerId != workerId)
+            {
+                requeuedExperiment = existingExperiment;
+                return false;
+            }
+
+            var updatedExperiment = new ExperimentResponse
+            {
+                Id = existingExperiment.Id,
+                Name = existingExperiment.Name,
+                Status = ExperimentStatus.Pending,
+                CreatedAtUtc = existingExperiment.CreatedAtUtc,
+                AssignedWorkerId = null,
+                FinishedAtUtc = null,
+                ResultMessage = null,
+                SimulateFailure = existingExperiment.SimulateFailure
+            };
+
+            if (_experiments.TryUpdate(
+                id,
+                updatedExperiment,
+                existingExperiment))
+            {
+                requeuedExperiment = updatedExperiment;
+                return true;
+            }
+        }
+    }
     
 }
