@@ -6,12 +6,18 @@ namespace Worker;
 
 public sealed class WorkerService(
     ILogger<WorkerService> logger,
-    IHttpClientFactory httpClientFactory) : BackgroundService
+    IHttpClientFactory httpClientFactory,
+    IConfiguration configuration) : BackgroundService
 {
-    private const string WorkerId = "worker-1";
+    private readonly string WorkerId =
+        configuration["Worker:Id"]
+        ?? throw new InvalidOperationException(
+            "Worker ID is not configured.");
 
-    private const string CoordinatorBaseUrl =
-        "http://localhost:5031";
+    private readonly string CoordinatorBaseUrl =
+        configuration["Worker:CoordinatorBaseUrl"]
+        ?? throw new InvalidOperationException(
+            "Coordinator URL is not configured.");
 
     private static readonly TimeSpan HeartbeatInterval =
         TimeSpan.FromSeconds(5);
@@ -21,9 +27,12 @@ public sealed class WorkerService(
 
     // Privremeno 20 sekundi kako bismo proverili
     // da heartbeat radi i tokom izvršavanja.
-    private static readonly TimeSpan SimulatedExecutionDuration =
-        TimeSpan.FromSeconds(3);
-
+    private readonly TimeSpan SimulatedExecutionDuration =
+        TimeSpan.FromSeconds(
+            ReadPositiveInt(
+                configuration,
+                "Worker:SimulatedExecutionSeconds",
+                3));
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
@@ -241,5 +250,16 @@ public sealed class WorkerService(
         {
             return false;
         }
+    }
+
+    private static int ReadPositiveInt(
+        IConfiguration configuration,
+        string key,
+        int defaultValue)
+    {
+        return int.TryParse(configuration[key], out var value) &&
+            value > 0
+            ? value
+            : defaultValue;
     }
 }
