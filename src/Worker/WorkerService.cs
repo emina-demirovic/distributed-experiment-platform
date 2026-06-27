@@ -209,6 +209,7 @@ public sealed class WorkerService(
         var completionRequest = new CompleteExperimentRequest
         {
             WorkerId = WorkerId,
+            Attempt = experiment.Attempt,
             Succeeded = !experiment.SimulateFailure,
             ResultMessage = experiment.SimulateFailure
                 ? "Simulated execution failure."

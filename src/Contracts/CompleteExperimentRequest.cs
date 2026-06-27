@@ -7,4 +7,7 @@ public sealed class CompleteExperimentRequest
     public bool Succeeded { get; set; }
 
     public string? ResultMessage { get; set; }
+
+    public int Attempt { get; set; }
+    
 }
