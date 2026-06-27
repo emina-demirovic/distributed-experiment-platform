@@ -15,4 +15,6 @@ public sealed class ExperimentResponse
     public DateTimeOffset? FinishedAtUtc { get; set; }
 
     public string? ResultMessage { get; set; }
+
+    public bool SimulateFailure { get; set; }
 }

@@ -27,7 +27,7 @@ public sealed class ExperimentsController : ControllerBase
             return BadRequest("Experiment name is required.");
         }
 
-        var experiment = _experimentRegistry.Create(request.Name);
+        var experiment = _experimentRegistry.Create(request.Name, request.SimulateFailure);
 
         return CreatedAtAction(
             nameof(GetById),
@@ -93,18 +93,18 @@ public sealed class ExperimentsController : ControllerBase
     }
 
     [HttpGet("worker/{workerId}/next")]
-public ActionResult<ExperimentResponse> GetNextForWorker(string workerId)
-{
-    var experiment =
-        _experimentRegistry.GetNextAssignedToWorker(workerId);
-
-    if (experiment is null)
+    public ActionResult<ExperimentResponse> GetNextForWorker(string workerId)
     {
-        return NoContent();
-    }
+        var experiment =
+            _experimentRegistry.GetNextAssignedToWorker(workerId);
 
-    return Ok(experiment);
-}
+        if (experiment is null)
+        {
+            return NoContent();
+        }
+
+        return Ok(experiment);
+    }
 
     [HttpPost("{id:guid}/complete")]
     public ActionResult<ExperimentResponse> Complete(

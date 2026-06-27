@@ -8,12 +8,13 @@ public sealed class ExperimentRegistry
     private readonly ConcurrentDictionary<Guid, ExperimentResponse> _experiments =
         new();
 
-    public ExperimentResponse Create(string name)
+    public ExperimentResponse Create(string name, bool simulateFailure = false)
     {
         var experiment = new ExperimentResponse
         {
             Id = Guid.NewGuid(),
             Name = name,
+            SimulateFailure = simulateFailure,
             Status = ExperimentStatus.Pending,
             CreatedAtUtc = DateTimeOffset.UtcNow,
             AssignedWorkerId = null,
@@ -65,7 +66,8 @@ public sealed class ExperimentRegistry
                 CreatedAtUtc = existingExperiment.CreatedAtUtc,
                 AssignedWorkerId = workerId,
                 FinishedAtUtc = null,
-                ResultMessage = null
+                ResultMessage = null,
+                SimulateFailure = existingExperiment.SimulateFailure
             };
 
             if (_experiments.TryUpdate(
@@ -121,7 +123,8 @@ public sealed class ExperimentRegistry
                 CreatedAtUtc = existingExperiment.CreatedAtUtc,
                 AssignedWorkerId = existingExperiment.AssignedWorkerId,
                 FinishedAtUtc = DateTimeOffset.UtcNow,
-                ResultMessage = resultMessage
+                ResultMessage = resultMessage,
+                SimulateFailure = existingExperiment.SimulateFailure
             };
 
             if (_experiments.TryUpdate(

@@ -102,8 +102,10 @@ public sealed class WorkerService(
                     var completionRequest = new CompleteExperimentRequest
                     {
                         WorkerId = WorkerId,
-                        Succeeded = true,
-                        ResultMessage = "Simulated execution completed successfully."
+                        Succeeded = !experiment.SimulateFailure,
+                        ResultMessage = experiment.SimulateFailure
+                            ? "Simulated execution failure."
+                            : "Simulated execution completed successfully."
                     };
 
                     var completionResponse = await client.PostAsJsonAsync(
@@ -113,9 +115,18 @@ public sealed class WorkerService(
 
                     completionResponse.EnsureSuccessStatusCode();
 
-                    logger.LogInformation(
-                        "Experiment {ExperimentId} completed successfully.",
-                        experiment.Id);
+                    if (experiment.SimulateFailure)
+                    {
+                        logger.LogWarning(
+                            "Experiment {ExperimentId} failed.",
+                            experiment.Id);
+                    }
+                    else
+                    {
+                        logger.LogInformation(
+                            "Experiment {ExperimentId} completed successfully.",
+                            experiment.Id);
+                    }
                 }
             }
 
