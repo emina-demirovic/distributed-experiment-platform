@@ -8,6 +8,7 @@ builder.Services.AddControllers();
 builder.Services.AddSingleton<WorkerRegistry>();
 builder.Services.AddSingleton<ExperimentRegistry>();
 builder.Services.AddHostedService<ExperimentSchedulerService>();
+builder.Services.AddHostedService<ExperimentRecoveryService>();
 
 builder.Services.AddOpenApi();
 

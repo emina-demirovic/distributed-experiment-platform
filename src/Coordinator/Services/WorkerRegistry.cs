@@ -104,4 +104,16 @@ public sealed class WorkerRegistry
             .OrderBy(worker => worker.WorkerId)
             .ToArray();
     }
+
+    public bool IsOnline(string workerId)
+    {
+        if (!_workers.TryGetValue(workerId, out var worker))
+        {
+            return false;
+        }
+
+        return DateTimeOffset.UtcNow - worker.LastHeartbeatAtUtc
+            <= OnlineTimeout;
+    }
+    
 }
