@@ -30,6 +30,7 @@ public sealed class ExperimentRegistry(
             MaxSteps = maxSteps,
             Priority = priority,
             SimulateFailure = simulateFailure,
+            TimeoutSeconds = timeoutSeconds,
             Status = ExperimentStatus.Pending,
             CreatedAtUtc = DateTimeOffset.UtcNow,
             AssignedWorkerId = null,
@@ -38,6 +39,7 @@ public sealed class ExperimentRegistry(
             MetricsJson = null,
             ExecutionDurationMs = null,
             TimeoutSeconds = timeoutSeconds,
+            CancellationRequested = false,
             Attempt = 0
         };
 
@@ -128,7 +130,11 @@ public sealed class ExperimentRegistry(
                     (string?)null)
                 .SetProperty(
                     experiment => experiment.ExecutionDurationMs,
-                    (long?)null));
+                    (long?)null)
+                .SetProperty(
+                    experiment => experiment.CancellationRequested,
+                    false)
+                );
 
         var experiment = dbContext.Experiments
             .AsNoTracking()
@@ -169,7 +175,8 @@ public sealed class ExperimentRegistry(
             .AsNoTracking()
             .Where(experiment =>
                 experiment.AssignedWorkerId == workerId &&
-                experiment.Status == ExperimentStatus.Running)
+                experiment.Status == ExperimentStatus.Running &&
+                !experiment.CancellationRequested)
             .AsEnumerable()
             .OrderBy(experiment => experiment.CreatedAtUtc)
             .FirstOrDefault();
@@ -184,6 +191,7 @@ public sealed class ExperimentRegistry(
         string workerId,
         int attempt,
         bool succeeded,
+        bool wasCancelled,
         string? resultMessage,
         out ExperimentResponse? finishedExperiment,
         string? metricsJson,
@@ -195,9 +203,11 @@ public sealed class ExperimentRegistry(
         using var transaction =
             dbContext.Database.BeginTransaction();
 
-        var finalStatus = succeeded
-            ? ExperimentStatus.Completed
-            : ExperimentStatus.Failed;
+        var finalStatus = wasCancelled
+            ? ExperimentStatus.Cancelled
+            : succeeded
+                ? ExperimentStatus.Completed
+                : ExperimentStatus.Failed;
 
         var finishedAtUtc = DateTimeOffset.UtcNow;
 
@@ -206,7 +216,8 @@ public sealed class ExperimentRegistry(
                 experiment.Id == id &&
                 experiment.Status == ExperimentStatus.Running &&
                 experiment.AssignedWorkerId == workerId &&
-                experiment.Attempt == attempt)
+                experiment.Attempt == attempt &&
+                experiment.CancellationRequested == wasCancelled)
             .ExecuteUpdate(setters => setters
                 .SetProperty(
                     experiment => experiment.Status,
@@ -222,7 +233,11 @@ public sealed class ExperimentRegistry(
                     metricsJson)
                 .SetProperty(
                     experiment => experiment.ExecutionDurationMs,
-                    executionDurationMs));
+                    executionDurationMs)
+                .SetProperty(
+                    experiment => experiment.CancellationRequested,
+                    wasCancelled)
+                );
 
         var experiment = dbContext.Experiments
             .AsNoTracking()
@@ -238,13 +253,17 @@ public sealed class ExperimentRegistry(
             return false;
         }
 
-        var eventType = succeeded
-            ? ExperimentEventType.Completed
-            : ExperimentEventType.Failed;
+        var eventType = wasCancelled
+            ? ExperimentEventType.Cancelled
+            : succeeded
+                ? ExperimentEventType.Completed
+                : ExperimentEventType.Failed;
 
-        var details = succeeded
-            ? "Experiment completed successfully."
-            : $"Experiment failed. {resultMessage}";
+        var details = wasCancelled
+            ? "Experiment execution was cancelled."
+            : succeeded
+                ? "Experiment completed successfully."
+                : $"Experiment failed. {resultMessage}";
 
         dbContext.ExperimentEvents.Add(
             CreateEvent(
@@ -317,58 +336,237 @@ public sealed class ExperimentRegistry(
         using var transaction =
             dbContext.Database.BeginTransaction();
 
-        var updatedRows = dbContext.Experiments
-            .Where(experiment =>
-                experiment.Id == id &&
-                experiment.Status == ExperimentStatus.Running &&
-                experiment.AssignedWorkerId == workerId)
-            .ExecuteUpdate(setters => setters
-                .SetProperty(
-                    experiment => experiment.Status,
-                    ExperimentStatus.Pending)
-                .SetProperty(
-                    experiment => experiment.AssignedWorkerId,
-                    (string?)null)
-                .SetProperty(
-                    experiment => experiment.FinishedAtUtc,
-                    (DateTimeOffset?)null)
-                .SetProperty(
-                    experiment => experiment.ResultMessage,
-                    (string?)null)
-                .SetProperty(
-                    experiment => experiment.MetricsJson,
-                    (string?)null)
-                .SetProperty(
-                    experiment => experiment.ExecutionDurationMs,
-                    (long?)null));    
-            
-        var experiment = dbContext.Experiments
+        var existingExperiment = dbContext.Experiments
             .AsNoTracking()
             .SingleOrDefault(experiment =>
                 experiment.Id == id);
 
-        requeuedExperiment = experiment is null
-            ? null
-            : ToResponse(experiment);
-
-        if (updatedRows != 1 || experiment is null)
+        if (existingExperiment is null ||
+            existingExperiment.Status != ExperimentStatus.Running ||
+            existingExperiment.AssignedWorkerId != workerId)
         {
+            requeuedExperiment = existingExperiment is null
+                ? null
+                : ToResponse(existingExperiment);
+
             return false;
         }
 
+        int updatedRows;
+        ExperimentEventType eventType;
+        string eventDetails;
+
+        if (existingExperiment.CancellationRequested)
+        {
+            var finishedAtUtc = DateTimeOffset.UtcNow;
+
+            updatedRows = dbContext.Experiments
+                .Where(experiment =>
+                    experiment.Id == id &&
+                    experiment.Status == ExperimentStatus.Running &&
+                    experiment.AssignedWorkerId == workerId &&
+                    experiment.CancellationRequested)
+                .ExecuteUpdate(setters => setters
+                    .SetProperty(
+                        experiment => experiment.Status,
+                        ExperimentStatus.Cancelled)
+                    .SetProperty(
+                        experiment => experiment.AssignedWorkerId,
+                        (string?)null)
+                    .SetProperty(
+                        experiment => experiment.FinishedAtUtc,
+                        finishedAtUtc)
+                    .SetProperty(
+                        experiment => experiment.ResultMessage,
+                        "Experiment was cancelled after the worker became unavailable.")
+                    .SetProperty(
+                        experiment => experiment.MetricsJson,
+                        (string?)null)
+                    .SetProperty(
+                        experiment => experiment.ExecutionDurationMs,
+                        (long?)null));
+
+            eventType = ExperimentEventType.Cancelled;
+            eventDetails =
+                $"Experiment was cancelled after worker '{workerId}' became unavailable.";
+        }
+        else
+        {
+            updatedRows = dbContext.Experiments
+                .Where(experiment =>
+                    experiment.Id == id &&
+                    experiment.Status == ExperimentStatus.Running &&
+                    experiment.AssignedWorkerId == workerId &&
+                    !experiment.CancellationRequested)
+                .ExecuteUpdate(setters => setters
+                    .SetProperty(
+                        experiment => experiment.Status,
+                        ExperimentStatus.Pending)
+                    .SetProperty(
+                        experiment => experiment.AssignedWorkerId,
+                        (string?)null)
+                    .SetProperty(
+                        experiment => experiment.FinishedAtUtc,
+                        (DateTimeOffset?)null)
+                    .SetProperty(
+                        experiment => experiment.ResultMessage,
+                        (string?)null)
+                    .SetProperty(
+                        experiment => experiment.MetricsJson,
+                        (string?)null)
+                    .SetProperty(
+                        experiment => experiment.ExecutionDurationMs,
+                        (long?)null)
+                    .SetProperty(
+                        experiment => experiment.CancellationRequested,
+                        false));
+
+            eventType = ExperimentEventType.Requeued;
+            eventDetails =
+                $"Experiment was returned to Pending because worker '{workerId}' became unavailable.";
+        }
+
+        if (updatedRows != 1)
+        {
+            requeuedExperiment = GetById(id);
+            return false;
+        }
+
+        var updatedExperiment = dbContext.Experiments
+            .AsNoTracking()
+            .Single(experiment =>
+                experiment.Id == id);
+
         dbContext.ExperimentEvents.Add(
             CreateEvent(
-                experiment.Id,
-                ExperimentEventType.Requeued,
+                updatedExperiment.Id,
+                eventType,
                 workerId,
-                experiment.Attempt,
-                $"Experiment was returned to Pending because worker '{workerId}' became unavailable."));
+                updatedExperiment.Attempt,
+                eventDetails));
 
         dbContext.SaveChanges();
         transaction.Commit();
 
-        return true;
+        requeuedExperiment = ToResponse(updatedExperiment);
 
+        return true;
+    }
+
+    public bool TryRequestCancellation(
+        Guid id,
+        out ExperimentResponse? updatedExperiment)
+    {
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        using var transaction =
+            dbContext.Database.BeginTransaction();
+
+        var existingExperiment = dbContext.Experiments
+            .AsNoTracking()
+            .SingleOrDefault(experiment =>
+                experiment.Id == id);
+
+        if (existingExperiment is null)
+        {
+            updatedExperiment = null;
+            return false;
+        }
+
+        if (existingExperiment.Status == ExperimentStatus.Cancelled)
+        {
+            updatedExperiment = ToResponse(existingExperiment);
+            return true;
+        }
+
+        int updatedRows;
+        ExperimentEventType eventType;
+        string details;
+
+        if (existingExperiment.Status == ExperimentStatus.Pending)
+        {
+            var finishedAtUtc = DateTimeOffset.UtcNow;
+
+            updatedRows = dbContext.Experiments
+                .Where(experiment =>
+                    experiment.Id == id &&
+                    experiment.Status == ExperimentStatus.Pending)
+                .ExecuteUpdate(setters => setters
+                    .SetProperty(
+                        experiment => experiment.Status,
+                        ExperimentStatus.Cancelled)
+                    .SetProperty(
+                        experiment => experiment.CancellationRequested,
+                        true)
+                    .SetProperty(
+                        experiment => experiment.FinishedAtUtc,
+                        finishedAtUtc)
+                    .SetProperty(
+                        experiment => experiment.ResultMessage,
+                        "Experiment was cancelled before execution."));
+
+            eventType = ExperimentEventType.Cancelled;
+            details =
+                "Experiment was cancelled before execution.";
+        }
+        else if (existingExperiment.Status == ExperimentStatus.Running)
+        {
+            if (existingExperiment.CancellationRequested)
+            {
+                updatedExperiment =
+                    ToResponse(existingExperiment);
+
+                return true;
+            }
+
+            updatedRows = dbContext.Experiments
+                .Where(experiment =>
+                    experiment.Id == id &&
+                    experiment.Status == ExperimentStatus.Running &&
+                    !experiment.CancellationRequested)
+                .ExecuteUpdate(setters => setters
+                    .SetProperty(
+                        experiment => experiment.CancellationRequested,
+                        true));
+
+            eventType = ExperimentEventType.CancelRequested;
+            details =
+                "Cancellation was requested for the running experiment.";
+        }
+        else
+        {
+            updatedExperiment =
+                ToResponse(existingExperiment);
+
+            return false;
+        }
+
+        if (updatedRows != 1)
+        {
+            updatedExperiment = GetById(id);
+            return false;
+        }
+
+        var updatedEntity = dbContext.Experiments
+            .AsNoTracking()
+            .Single(experiment =>
+                experiment.Id == id);
+
+        dbContext.ExperimentEvents.Add(
+            CreateEvent(
+                updatedEntity.Id,
+                eventType,
+                updatedEntity.AssignedWorkerId,
+                updatedEntity.Attempt,
+                details));
+
+        dbContext.SaveChanges();
+        transaction.Commit();
+
+        updatedExperiment = ToResponse(updatedEntity);
+
+        return true;
     }
 
     private static ExperimentEventEntity CreateEvent(
@@ -410,8 +608,9 @@ public sealed class ExperimentRegistry(
             SimulateFailure = experiment.SimulateFailure,
             Attempt = experiment.Attempt,
             MetricsJson = experiment.MetricsJson,
+            CancellationRequested = experiment.CancellationRequested,
             ExecutionDurationMs = experiment.ExecutionDurationMs,
-            TimeoutSeconds = experiment.TimeoutSeconds,
+            TimeoutSeconds = experiment.TimeoutSeconds
         };
     }
 

@@ -188,6 +188,7 @@ public sealed class ExperimentsController : ControllerBase
             request.WorkerId,
             request.Attempt,
             request.Succeeded,
+            request.WasCancelled,
             request.ResultMessage,
             out var finishedExperiment,
             request.MetricsJson,
@@ -197,6 +198,14 @@ public sealed class ExperimentsController : ControllerBase
         {
             return Conflict(
                 $"Experiment '{id}' could not be completed.");
+        }
+
+        if (existingExperiment.CancellationRequested !=
+            request.WasCancelled)
+        {
+            return Conflict(
+                "The completion result does not match the current " +
+                "cancellation state.");
         }
 
         return Ok(finishedExperiment);
@@ -214,6 +223,47 @@ public sealed class ExperimentsController : ControllerBase
         }
 
         return Ok(_experimentRegistry.GetEvents(id));
+    }
+
+    [HttpPost("{id:guid}/cancel")]
+    public ActionResult<ExperimentResponse> Cancel(Guid id)
+    {
+        var existingExperiment =
+            _experimentRegistry.GetById(id);
+
+        if (existingExperiment is null)
+        {
+            return NotFound(
+                $"Experiment '{id}' was not found.");
+        }
+
+        if (existingExperiment.Status ==
+            ExperimentStatus.Cancelled)
+        {
+            return Ok(existingExperiment);
+        }
+
+        if (existingExperiment.Status is
+            ExperimentStatus.Completed or
+            ExperimentStatus.Failed)
+        {
+            return Conflict(
+                $"Experiment '{id}' cannot be cancelled because " +
+                $"its status is '{existingExperiment.Status}'.");
+        }
+
+        var cancelled =
+            _experimentRegistry.TryRequestCancellation(
+                id,
+                out var updatedExperiment);
+
+        if (!cancelled || updatedExperiment is null)
+        {
+            return Conflict(
+                $"Experiment '{id}' could not be cancelled.");
+        }
+
+        return Ok(updatedExperiment);
     }
     
 }
