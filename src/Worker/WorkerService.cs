@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Contracts;
 using Worker.Execution;
@@ -251,51 +252,121 @@ public sealed class WorkerService(
             experiment.MaxSteps,
             experiment.Priority);
 
-        var executionResult =
-            await experimentExecutor.ExecuteAsync(
-                experiment,
+        using var manualCancellation =
+            new CancellationTokenSource();
+
+        using var monitorCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken);
+
+        using var executionCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
+                stoppingToken,
+                manualCancellation.Token);
+
+        executionCancellation.CancelAfter(
+            TimeSpan.FromSeconds(
+                experiment.TimeoutSeconds));
+
+        var cancellationMonitorTask =
+            MonitorCancellationAsync(
+                client,
+                experiment.Id,
+                manualCancellation,
+                monitorCancellation.Token);
+
+        var stopwatch = Stopwatch.StartNew();
+
+        ExperimentExecutionResult executionResult;
+        var wasCancelled = false;
+
+        try
+        {
+            executionResult =
+                await experimentExecutor.ExecuteAsync(
+                    experiment,
+                    executionCancellation.Token);
+
+            stopwatch.Stop();
+        }
+        catch (OperationCanceledException)
+            when (!stoppingToken.IsCancellationRequested &&
+                manualCancellation.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
+            wasCancelled = true;
+
+            executionResult = new ExperimentExecutionResult(
+                false,
+                "Experiment was cancelled by request.",
+                null,
+                stopwatch.ElapsedMilliseconds);
+        }
+        catch (OperationCanceledException)
+            when (!stoppingToken.IsCancellationRequested &&
+                executionCancellation.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
+            executionResult = new ExperimentExecutionResult(
+                false,
+                $"Execution timed out after " +
+                $"{experiment.TimeoutSeconds} second(s).",
+                null,
+                stopwatch.ElapsedMilliseconds);
+        }
+        finally
+        {
+            monitorCancellation.Cancel();
+
+            try
+            {
+                await cancellationMonitorTask;
+            }
+            catch (OperationCanceledException)
+                when (monitorCancellation.IsCancellationRequested)
+            {
+                // Očekivano gašenje monitora.
+            }
+        }
 
         var completionRequest = new CompleteExperimentRequest
         {
             WorkerId = WorkerId,
             Attempt = experiment.Attempt,
             Succeeded = executionResult.Succeeded,
+            WasCancelled = wasCancelled,
             ResultMessage = executionResult.ResultMessage,
             MetricsJson = executionResult.MetricsJson,
-            ExecutionDurationMs = executionResult.ExecutionDurationMs
+            ExecutionDurationMs =
+                executionResult.ExecutionDurationMs
         };
 
-        if (executionResult.Succeeded)
-        {
-            logger.LogInformation(
-                "Experiment {ExperimentId} completed successfully.",
-                experiment.Id);
-        }
-        else
-        {
-            logger.LogWarning(
-                "Experiment {ExperimentId} failed.",
-                experiment.Id);
-        }
-
         var response = await client.PostAsJsonAsync(
-            $"{CoordinatorBaseUrl}/api/experiments/{experiment.Id}/complete",
+            $"{CoordinatorBaseUrl}/api/experiments/" +
+            $"{experiment.Id}/complete",
             completionRequest,
             stoppingToken);
 
         response.EnsureSuccessStatusCode();
 
-        if (experiment.SimulateFailure)
+        if (wasCancelled)
         {
             logger.LogWarning(
-                "Experiment {ExperimentId} failed.",
+                "Experiment {ExperimentId} was cancelled.",
+                experiment.Id);
+        }
+        else if (executionResult.Succeeded)
+        {
+            logger.LogInformation(
+                "Experiment {ExperimentId} completed successfully.",
                 experiment.Id);
         }
         else
         {
-            logger.LogInformation(
-                "Experiment {ExperimentId} completed successfully.",
+            logger.LogWarning(
+                "Experiment {ExperimentId} failed.",
                 experiment.Id);
         }
     }
@@ -313,6 +384,61 @@ public sealed class WorkerService(
             when (stoppingToken.IsCancellationRequested)
         {
             return false;
+        }
+    }
+
+    private async Task MonitorCancellationAsync(
+        HttpClient client,
+        Guid experimentId,
+        CancellationTokenSource manualCancellation,
+        CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested &&
+            !manualCancellation.IsCancellationRequested)
+        {
+            try
+            {
+                var response = await client.GetAsync(
+                    $"{CoordinatorBaseUrl}/api/experiments/{experimentId}",
+                    cancellationToken);
+
+                response.EnsureSuccessStatusCode();
+
+                var experiment =
+                    await response.Content
+                        .ReadFromJsonAsync<ExperimentResponse>(
+                            cancellationToken:
+                                cancellationToken);
+
+                if (experiment?.CancellationRequested == true)
+                {
+                    logger.LogWarning(
+                        "Cancellation requested for experiment {ExperimentId}.",
+                        experimentId);
+
+                    manualCancellation.Cancel();
+                    return;
+                }
+            }
+            catch (OperationCanceledException)
+                when (cancellationToken.IsCancellationRequested)
+            {
+                return;
+            }
+            catch (Exception exception)
+            {
+                logger.LogWarning(
+                    exception,
+                    "Could not check cancellation state for experiment {ExperimentId}.",
+                    experimentId);
+            }
+
+            if (!await WaitAsync(
+                    TimeSpan.FromSeconds(1),
+                    cancellationToken))
+            {
+                return;
+            }
         }
     }
 

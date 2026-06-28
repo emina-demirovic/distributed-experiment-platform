@@ -35,4 +35,8 @@ public sealed class ExperimentEntity
     public string? MetricsJson { get; set; }
 
     public long? ExecutionDurationMs { get; set; }
+
+    public bool CancellationRequested { get; set; }
+
+    public int TimeoutSeconds { get; set; } = 300;
 }

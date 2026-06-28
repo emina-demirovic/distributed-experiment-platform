@@ -14,7 +14,7 @@ public sealed class CompleteExperimentRequest
 
     public long? ExecutionDurationMs { get; set; }
 
-
+    public bool WasCancelled { get; set; }
 
 }
 
