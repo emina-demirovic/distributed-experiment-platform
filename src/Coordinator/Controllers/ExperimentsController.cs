@@ -165,5 +165,19 @@ public sealed class ExperimentsController : ControllerBase
 
         return Ok(finishedExperiment);
     }
+
+    [HttpGet("{id:guid}/events")]
+    public ActionResult<IReadOnlyCollection<ExperimentEventResponse>>
+        GetEvents(Guid id)
+    {
+        var experiment = _experimentRegistry.GetById(id);
+
+        if (experiment is null)
+        {
+            return NotFound($"Experiment '{id}' was not found.");
+        }
+
+        return Ok(_experimentRegistry.GetEvents(id));
+    }
     
 }

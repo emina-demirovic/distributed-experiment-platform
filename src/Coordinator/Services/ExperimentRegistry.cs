@@ -28,6 +28,20 @@ public sealed class ExperimentRegistry(
         };
 
         dbContext.Experiments.Add(experiment);
+
+        var createdEvent = new ExperimentEventEntity
+        {
+            Id = Guid.NewGuid(),
+            ExperimentId = experiment.Id,
+            Type = ExperimentEventType.Created,
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+            WorkerId = null,
+            Attempt = 0,
+            Details = $"Experiment '{experiment.Name}' was created."
+        };
+
+        dbContext.ExperimentEvents.Add(createdEvent);
+
         dbContext.SaveChanges();
 
         return ToResponse(experiment);
@@ -69,6 +83,9 @@ public sealed class ExperimentRegistry(
         using var dbContext =
             dbContextFactory.CreateDbContext();
 
+        using var transaction =
+            dbContext.Database.BeginTransaction();
+
         var updatedRows = dbContext.Experiments
             .Where(experiment =>
                 experiment.Id == id &&
@@ -90,9 +107,33 @@ public sealed class ExperimentRegistry(
                     experiment => experiment.Attempt,
                     experiment => experiment.Attempt + 1));
 
-        assignedExperiment = GetById(id);
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
+            .SingleOrDefault(experiment =>
+                experiment.Id == id);
 
-        return updatedRows == 1;
+        assignedExperiment = experiment is null
+            ? null
+            : ToResponse(experiment);
+
+        if (updatedRows != 1 || experiment is null)
+        {
+            return false;
+        }
+
+        dbContext.ExperimentEvents.Add(
+            CreateEvent(
+                experiment.Id,
+                ExperimentEventType.Assigned,
+                workerId,
+                experiment.Attempt,
+                $"Experiment was assigned to worker '{workerId}'."));
+
+        dbContext.SaveChanges();
+        transaction.Commit();
+
+        return true;
+
     }
 
     public ExperimentResponse? GetNextAssignedToWorker(
@@ -126,6 +167,9 @@ public sealed class ExperimentRegistry(
         using var dbContext =
             dbContextFactory.CreateDbContext();
 
+        using var transaction =
+            dbContext.Database.BeginTransaction();
+
         var finalStatus = succeeded
             ? ExperimentStatus.Completed
             : ExperimentStatus.Failed;
@@ -149,9 +193,40 @@ public sealed class ExperimentRegistry(
                     experiment => experiment.ResultMessage,
                     resultMessage));
 
-        finishedExperiment = GetById(id);
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
+            .SingleOrDefault(experiment =>
+                experiment.Id == id);
 
-        return updatedRows == 1;
+        finishedExperiment = experiment is null
+            ? null
+            : ToResponse(experiment);
+
+        if (updatedRows != 1 || experiment is null)
+        {
+            return false;
+        }
+
+        var eventType = succeeded
+            ? ExperimentEventType.Completed
+            : ExperimentEventType.Failed;
+
+        var details = succeeded
+            ? "Experiment completed successfully."
+            : $"Experiment failed. {resultMessage}";
+
+        dbContext.ExperimentEvents.Add(
+            CreateEvent(
+                experiment.Id,
+                eventType,
+                workerId,
+                attempt,
+                details));
+
+        dbContext.SaveChanges();
+        transaction.Commit();
+
+        return true;
     }
 
     public ExperimentResponse? GetNextPending()
@@ -205,6 +280,9 @@ public sealed class ExperimentRegistry(
         using var dbContext =
             dbContextFactory.CreateDbContext();
 
+        using var transaction =
+            dbContext.Database.BeginTransaction();
+
         var updatedRows = dbContext.Experiments
             .Where(experiment =>
                 experiment.Id == id &&
@@ -223,10 +301,53 @@ public sealed class ExperimentRegistry(
                 .SetProperty(
                     experiment => experiment.ResultMessage,
                     (string?)null));
+            
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
+            .SingleOrDefault(experiment =>
+                experiment.Id == id);
 
-        requeuedExperiment = GetById(id);
+        requeuedExperiment = experiment is null
+            ? null
+            : ToResponse(experiment);
 
-        return updatedRows == 1;
+        if (updatedRows != 1 || experiment is null)
+        {
+            return false;
+        }
+
+        dbContext.ExperimentEvents.Add(
+            CreateEvent(
+                experiment.Id,
+                ExperimentEventType.Requeued,
+                workerId,
+                experiment.Attempt,
+                $"Experiment was returned to Pending because worker '{workerId}' became unavailable."));
+
+        dbContext.SaveChanges();
+        transaction.Commit();
+
+        return true;
+
+    }
+
+    private static ExperimentEventEntity CreateEvent(
+        Guid experimentId,
+        ExperimentEventType type,
+        string? workerId,
+        int attempt,
+        string details)
+    {
+        return new ExperimentEventEntity
+        {
+            Id = Guid.NewGuid(),
+            ExperimentId = experimentId,
+            Type = type,
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+            WorkerId = workerId,
+            Attempt = attempt,
+            Details = details
+        };
     }
 
     private static ExperimentResponse ToResponse(
@@ -251,22 +372,62 @@ public sealed class ExperimentRegistry(
         using var dbContext =
             dbContextFactory.CreateDbContext();
 
-        return dbContext.Experiments
+        using var transaction =
+            dbContext.Database.BeginTransaction();
+
+        var interruptedExperiments = dbContext.Experiments
             .Where(experiment =>
                 experiment.Status == ExperimentStatus.Running)
-            .ExecuteUpdate(setters => setters
-                .SetProperty(
-                    experiment => experiment.Status,
-                    ExperimentStatus.Pending)
-                .SetProperty(
-                    experiment => experiment.AssignedWorkerId,
-                    (string?)null)
-                .SetProperty(
-                    experiment => experiment.FinishedAtUtc,
-                    (DateTimeOffset?)null)
-                .SetProperty(
-                    experiment => experiment.ResultMessage,
-                    (string?)null));
+            .ToArray();
+
+        foreach (var experiment in interruptedExperiments)
+        {
+            var previousWorkerId = experiment.AssignedWorkerId;
+
+            experiment.Status = ExperimentStatus.Pending;
+            experiment.AssignedWorkerId = null;
+            experiment.FinishedAtUtc = null;
+            experiment.ResultMessage = null;
+
+            dbContext.ExperimentEvents.Add(
+                CreateEvent(
+                    experiment.Id,
+                    ExperimentEventType.RecoveredOnStartup,
+                    previousWorkerId,
+                    experiment.Attempt,
+                    "Experiment was returned to Pending after Coordinator restart."));
+        }
+
+        dbContext.SaveChanges();
+        transaction.Commit();
+
+        return interruptedExperiments.Length;
+    }
+
+    public IReadOnlyCollection<ExperimentEventResponse> GetEvents(
+    Guid experimentId)
+    {
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        return dbContext.ExperimentEvents
+            .AsNoTracking()
+            .Where(experimentEvent =>
+                experimentEvent.ExperimentId == experimentId)
+            .AsEnumerable()
+            .OrderBy(experimentEvent =>
+                experimentEvent.OccurredAtUtc)
+            .Select(experimentEvent =>
+                new ExperimentEventResponse
+                {
+                    Id = experimentEvent.Id,
+                    Type = experimentEvent.Type.ToString(),
+                    OccurredAtUtc = experimentEvent.OccurredAtUtc,
+                    WorkerId = experimentEvent.WorkerId,
+                    Attempt = experimentEvent.Attempt,
+                    Details = experimentEvent.Details
+                })
+            .ToArray();
     }
     
 }
