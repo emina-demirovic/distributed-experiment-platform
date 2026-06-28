@@ -25,6 +25,9 @@ public sealed class WorkerService(
     private static readonly TimeSpan ExperimentPollingInterval =
         TimeSpan.FromSeconds(2);
 
+    private static readonly TimeSpan RegistrationRetryInterval =
+        TimeSpan.FromSeconds(5);
+
     // Privremeno 20 sekundi kako bismo proverili
     // da heartbeat radi i tokom izvršavanja.
     private readonly TimeSpan SimulatedExecutionDuration =
@@ -38,7 +41,7 @@ public sealed class WorkerService(
     {
         var client = httpClientFactory.CreateClient();
 
-        var registered = await RegisterAsync(
+        var registered = await WaitForRegistrationAsync(
             client,
             stoppingToken);
 
@@ -91,6 +94,32 @@ public sealed class WorkerService(
         }
     }
 
+    private async Task<bool> WaitForRegistrationAsync(
+        HttpClient client,
+        CancellationToken stoppingToken)
+    {
+        while (!stoppingToken.IsCancellationRequested)
+        {
+            if (await RegisterAsync(client, stoppingToken))
+            {
+                return true;
+            }
+
+            logger.LogWarning(
+                "Worker {WorkerId} will retry registration.",
+                WorkerId);
+
+            if (!await WaitAsync(
+                    RegistrationRetryInterval,
+                    stoppingToken))
+            {
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     private async Task RunHeartbeatLoopAsync(
         HttpClient client,
         CancellationToken stoppingToken)
@@ -104,11 +133,29 @@ public sealed class WorkerService(
                     content: null,
                     stoppingToken);
 
-                response.EnsureSuccessStatusCode();
+                if (response.StatusCode == HttpStatusCode.NotFound)
+                {
+                    logger.LogWarning(
+                        "Worker {WorkerId} is no longer registered. Registering again.",
+                        WorkerId);
 
-                logger.LogDebug(
-                    "Heartbeat sent by {WorkerId}.",
-                    WorkerId);
+                    var registered = await WaitForRegistrationAsync(
+                        client,
+                        stoppingToken);
+
+                    if (!registered)
+                    {
+                        break;
+                    }
+                }
+                else
+                {
+                    response.EnsureSuccessStatusCode();
+
+                    logger.LogDebug(
+                        "Heartbeat sent by {WorkerId}.",
+                        WorkerId);
+                }
             }
             catch (OperationCanceledException)
                 when (stoppingToken.IsCancellationRequested)
