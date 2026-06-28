@@ -27,8 +27,35 @@ public sealed class ExperimentsController : ControllerBase
             return BadRequest("Experiment name is required.");
         }
 
-        var experiment = _experimentRegistry.Create(request.Name, request.SimulateFailure);
+        if (string.IsNullOrWhiteSpace(request.Algorithm))
+        {
+            return BadRequest("Algorithm is required.");
+        }
 
+        if (string.IsNullOrWhiteSpace(request.Environment))
+        {
+            return BadRequest("Environment is required.");
+        }
+
+        if (request.MaxSteps <= 0)
+        {
+            return BadRequest("MaxSteps must be greater than zero.");
+        }
+
+        if (request.Priority is < 0 or > 10)
+        {
+            return BadRequest("Priority must be between 0 and 10.");
+        }
+
+        var experiment = _experimentRegistry.Create(
+            request.Name,
+            request.Algorithm,
+            request.Environment,
+            request.Seed,
+            request.MaxSteps,
+            request.Priority,
+            request.SimulateFailure);
+    
         return CreatedAtAction(
             nameof(GetById),
             new { id = experiment.Id },

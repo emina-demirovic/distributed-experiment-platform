@@ -21,6 +21,14 @@ public sealed class CoordinatorDbContext(
             entity.Property(experiment => experiment.Name)
                 .IsRequired()
                 .HasMaxLength(200);
+
+            entity.Property(experiment => experiment.Algorithm)
+                .IsRequired()
+                .HasMaxLength(100);
+
+            entity.Property(experiment => experiment.Environment)
+                .IsRequired()
+                .HasMaxLength(200);
         });
 
         modelBuilder.Entity<ExperimentEventEntity>(entity =>
