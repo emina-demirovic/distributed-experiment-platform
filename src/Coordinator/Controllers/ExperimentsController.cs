@@ -47,6 +47,12 @@ public sealed class ExperimentsController : ControllerBase
             return BadRequest("Priority must be between 0 and 10.");
         }
 
+        if (request.TimeoutSeconds is < 1 or > 86400)
+        {
+            return BadRequest(
+                "TimeoutSeconds must be between 1 and 86400.");
+        }
+
         var experiment = _experimentRegistry.Create(
             request.Name,
             request.Algorithm,
@@ -54,8 +60,9 @@ public sealed class ExperimentsController : ControllerBase
             request.Seed,
             request.MaxSteps,
             request.Priority,
+            request.TimeoutSeconds,
             request.SimulateFailure);
-    
+
         return CreatedAtAction(
             nameof(GetById),
             new { id = experiment.Id },

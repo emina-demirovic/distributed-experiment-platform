@@ -14,6 +14,7 @@ public sealed class ExperimentRegistry(
         int seed,
         int maxSteps,
         int priority,
+        int timeoutSeconds,
         bool simulateFailure = false)
     {
         using var dbContext =
@@ -36,6 +37,7 @@ public sealed class ExperimentRegistry(
             ResultMessage = null,
             MetricsJson = null,
             ExecutionDurationMs = null,
+            TimeoutSeconds = timeoutSeconds,
             Attempt = 0
         };
 
@@ -408,7 +410,8 @@ public sealed class ExperimentRegistry(
             SimulateFailure = experiment.SimulateFailure,
             Attempt = experiment.Attempt,
             MetricsJson = experiment.MetricsJson,
-            ExecutionDurationMs = experiment.ExecutionDurationMs
+            ExecutionDurationMs = experiment.ExecutionDurationMs,
+            TimeoutSeconds = experiment.TimeoutSeconds,
         };
     }
 

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Diagnostics;
 using System.Net.Http.Json;
 using Contracts;
 using Worker.Execution;
@@ -251,10 +252,38 @@ public sealed class WorkerService(
             experiment.MaxSteps,
             experiment.Priority);
 
-        var executionResult =
-            await experimentExecutor.ExecuteAsync(
-                experiment,
+        using var executionCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(
                 stoppingToken);
+
+        executionCancellation.CancelAfter(
+            TimeSpan.FromSeconds(
+                experiment.TimeoutSeconds));
+
+        var stopwatch = Stopwatch.StartNew();
+
+        ExperimentExecutionResult executionResult;
+
+        try
+        {
+            executionResult =
+                await experimentExecutor.ExecuteAsync(
+                    experiment,
+                    executionCancellation.Token);
+        }
+        catch (OperationCanceledException)
+            when (!stoppingToken.IsCancellationRequested &&
+                executionCancellation.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
+            executionResult = new ExperimentExecutionResult(
+                false,
+                $"Execution timed out after " +
+                $"{experiment.TimeoutSeconds} second(s).",
+                null,
+                stopwatch.ElapsedMilliseconds);
+        }
 
         var completionRequest = new CompleteExperimentRequest
         {

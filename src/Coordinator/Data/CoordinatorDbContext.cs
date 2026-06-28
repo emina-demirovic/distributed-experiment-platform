@@ -29,6 +29,9 @@ public sealed class CoordinatorDbContext(
             entity.Property(experiment => experiment.Environment)
                 .IsRequired()
                 .HasMaxLength(200);
+
+            entity.Property(experiment => experiment.TimeoutSeconds)
+                .HasDefaultValue(300);
         });
 
         modelBuilder.Entity<ExperimentEventEntity>(entity =>
