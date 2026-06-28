@@ -1,4 +1,6 @@
 using Coordinator.Services;
+using Coordinator.Data;
+using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -20,6 +22,15 @@ if (app.Environment.IsDevelopment())
     app.MapOpenApi();
 }
 
+var databasePath = Path.Combine(
+    builder.Environment.ContentRootPath,
+    "Data",
+    "coordinator.db");
+
+builder.Services.AddDbContextFactory<CoordinatorDbContext>(
+    options => options.UseSqlite(
+        $"Data Source={databasePath}"));
+        
 app.UseHttpsRedirection();
 
 app.UseAuthorization();
