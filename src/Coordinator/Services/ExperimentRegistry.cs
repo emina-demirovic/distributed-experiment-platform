@@ -28,6 +28,20 @@ public sealed class ExperimentRegistry(
         };
 
         dbContext.Experiments.Add(experiment);
+
+        var createdEvent = new ExperimentEventEntity
+        {
+            Id = Guid.NewGuid(),
+            ExperimentId = experiment.Id,
+            Type = ExperimentEventType.Created,
+            OccurredAtUtc = DateTimeOffset.UtcNow,
+            WorkerId = null,
+            Attempt = 0,
+            Details = $"Experiment '{experiment.Name}' was created."
+        };
+
+        dbContext.ExperimentEvents.Add(createdEvent);
+
         dbContext.SaveChanges();
 
         return ToResponse(experiment);
@@ -267,6 +281,32 @@ public sealed class ExperimentRegistry(
                 .SetProperty(
                     experiment => experiment.ResultMessage,
                     (string?)null));
+    }
+
+    public IReadOnlyCollection<ExperimentEventResponse> GetEvents(
+    Guid experimentId)
+    {
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        return dbContext.ExperimentEvents
+            .AsNoTracking()
+            .Where(experimentEvent =>
+                experimentEvent.ExperimentId == experimentId)
+            .AsEnumerable()
+            .OrderBy(experimentEvent =>
+                experimentEvent.OccurredAtUtc)
+            .Select(experimentEvent =>
+                new ExperimentEventResponse
+                {
+                    Id = experimentEvent.Id,
+                    Type = experimentEvent.Type.ToString(),
+                    OccurredAtUtc = experimentEvent.OccurredAtUtc,
+                    WorkerId = experimentEvent.WorkerId,
+                    Attempt = experimentEvent.Attempt,
+                    Details = experimentEvent.Details
+                })
+            .ToArray();
     }
     
 }
