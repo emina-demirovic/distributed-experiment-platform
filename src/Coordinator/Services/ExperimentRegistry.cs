@@ -9,6 +9,11 @@ public sealed class ExperimentRegistry(
 {
     public ExperimentResponse Create(
         string name,
+        string algorithm,
+        string environment,
+        int seed,
+        int maxSteps,
+        int priority,
         bool simulateFailure = false)
     {
         using var dbContext =
@@ -18,6 +23,11 @@ public sealed class ExperimentRegistry(
         {
             Id = Guid.NewGuid(),
             Name = name,
+            Algorithm = algorithm,
+            Environment = environment,
+            Seed = seed,
+            MaxSteps = maxSteps,
+            Priority = priority,
             SimulateFailure = simulateFailure,
             Status = ExperimentStatus.Pending,
             CreatedAtUtc = DateTimeOffset.UtcNow,
@@ -37,7 +47,10 @@ public sealed class ExperimentRegistry(
             OccurredAtUtc = DateTimeOffset.UtcNow,
             WorkerId = null,
             Attempt = 0,
-            Details = $"Experiment '{experiment.Name}' was created."
+            Details =
+                $"Experiment '{experiment.Name}' was created " +
+                $"for algorithm '{experiment.Algorithm}' and " +
+                $"environment '{experiment.Environment}'."
         };
 
         dbContext.ExperimentEvents.Add(createdEvent);
@@ -239,7 +252,10 @@ public sealed class ExperimentRegistry(
             .Where(experiment =>
                 experiment.Status == ExperimentStatus.Pending)
             .AsEnumerable()
-            .OrderBy(experiment => experiment.CreatedAtUtc)
+            .OrderByDescending(experiment =>
+                experiment.Priority)
+            .ThenBy(experiment =>
+                experiment.CreatedAtUtc)
             .FirstOrDefault();
 
         return experiment is null
@@ -358,6 +374,11 @@ public sealed class ExperimentRegistry(
             Id = experiment.Id,
             Name = experiment.Name,
             Status = experiment.Status,
+            Algorithm = experiment.Algorithm,
+            Environment = experiment.Environment,
+            Seed = experiment.Seed,
+            MaxSteps = experiment.MaxSteps,
+            Priority = experiment.Priority,
             CreatedAtUtc = experiment.CreatedAtUtc,
             AssignedWorkerId = experiment.AssignedWorkerId,
             FinishedAtUtc = experiment.FinishedAtUtc,

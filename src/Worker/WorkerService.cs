@@ -245,9 +245,16 @@ public sealed class WorkerService(
         CancellationToken stoppingToken)
     {
         logger.LogInformation(
-            "Starting experiment {ExperimentId}: {ExperimentName}.",
+            "Starting experiment {ExperimentId}: {ExperimentName}. " +
+            "Algorithm: {Algorithm}, Environment: {Environment}, " +
+            "Seed: {Seed}, MaxSteps: {MaxSteps}, Priority: {Priority}.",
             experiment.Id,
-            experiment.Name);
+            experiment.Name,
+            experiment.Algorithm,
+            experiment.Environment,
+            experiment.Seed,
+            experiment.MaxSteps,
+            experiment.Priority);
 
         await Task.Delay(
             SimulatedExecutionDuration,
