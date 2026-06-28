@@ -7,5 +7,7 @@ public enum ExperimentEventType
     Completed,
     Failed,
     Requeued,
-    RecoveredOnStartup
+    RecoveredOnStartup,
+    CancelRequested,
+    Cancelled
 }

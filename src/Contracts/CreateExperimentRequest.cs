@@ -14,4 +14,6 @@ public sealed class CreateExperimentRequest
     public int MaxSteps { get; set; }
 
     public int Priority { get; set; }
+
+    public int TimeoutSeconds { get; set; } = 300;
 }

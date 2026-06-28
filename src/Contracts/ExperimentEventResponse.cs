@@ -13,4 +13,6 @@ public sealed class ExperimentEventResponse
     public int Attempt { get; set; }
 
     public string? Details { get; set; }
+
+    public bool CancellationRequested { get; set; }
 }
