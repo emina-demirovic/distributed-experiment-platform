@@ -1,0 +1,5 @@
+namespace Worker.Execution;
+
+public sealed record ExperimentExecutionResult(
+    bool Succeeded,
+    string ResultMessage);

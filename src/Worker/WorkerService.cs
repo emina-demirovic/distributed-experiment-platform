@@ -1,13 +1,15 @@
 using System.Net;
 using System.Net.Http.Json;
 using Contracts;
-
+using Worker.Execution;
 namespace Worker;
 
 public sealed class WorkerService(
     ILogger<WorkerService> logger,
     IHttpClientFactory httpClientFactory,
-    IConfiguration configuration) : BackgroundService
+    IConfiguration configuration,
+    IExperimentExecutor experimentExecutor
+    ) : BackgroundService
 {
     private readonly string WorkerId =
         configuration["Worker:Id"]
@@ -28,14 +30,7 @@ public sealed class WorkerService(
     private static readonly TimeSpan RegistrationRetryInterval =
         TimeSpan.FromSeconds(5);
 
-    // Privremeno 20 sekundi kako bismo proverili
-    // da heartbeat radi i tokom izvršavanja.
-    private readonly TimeSpan SimulatedExecutionDuration =
-        TimeSpan.FromSeconds(
-            ReadPositiveInt(
-                configuration,
-                "Worker:SimulatedExecutionSeconds",
-                3));
+
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
@@ -256,19 +251,31 @@ public sealed class WorkerService(
             experiment.MaxSteps,
             experiment.Priority);
 
-        await Task.Delay(
-            SimulatedExecutionDuration,
-            stoppingToken);
+        var executionResult =
+            await experimentExecutor.ExecuteAsync(
+                experiment,
+                stoppingToken);
 
         var completionRequest = new CompleteExperimentRequest
         {
             WorkerId = WorkerId,
             Attempt = experiment.Attempt,
-            Succeeded = !experiment.SimulateFailure,
-            ResultMessage = experiment.SimulateFailure
-                ? "Simulated execution failure."
-                : "Simulated execution completed successfully."
+            Succeeded = executionResult.Succeeded,
+            ResultMessage = executionResult.ResultMessage
         };
+
+        if (executionResult.Succeeded)
+        {
+            logger.LogInformation(
+                "Experiment {ExperimentId} completed successfully.",
+                experiment.Id);
+        }
+        else
+        {
+            logger.LogWarning(
+                "Experiment {ExperimentId} failed.",
+                experiment.Id);
+        }
 
         var response = await client.PostAsJsonAsync(
             $"{CoordinatorBaseUrl}/api/experiments/{experiment.Id}/complete",
@@ -307,14 +314,4 @@ public sealed class WorkerService(
         }
     }
 
-    private static int ReadPositiveInt(
-        IConfiguration configuration,
-        string key,
-        int defaultValue)
-    {
-        return int.TryParse(configuration[key], out var value) &&
-            value > 0
-            ? value
-            : defaultValue;
-    }
 }
