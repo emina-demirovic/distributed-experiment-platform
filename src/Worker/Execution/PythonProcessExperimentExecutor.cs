@@ -20,11 +20,17 @@ public sealed class PythonProcessExperimentExecutor(
         ExperimentResponse experiment,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+
         if (!File.Exists(_scriptPath))
         {
+            stopwatch.Stop();
+
             return new ExperimentExecutionResult(
                 false,
-                $"Python script was not found: {_scriptPath}");
+                $"Python script was not found: {_scriptPath}",
+                null,
+                stopwatch.ElapsedMilliseconds);
         }
 
         var startInfo = new ProcessStartInfo
@@ -67,9 +73,13 @@ public sealed class PythonProcessExperimentExecutor(
         {
             if (!process.Start())
             {
+                stopwatch.Stop();
+
                 return new ExperimentExecutionResult(
                     false,
-                    "Python process could not be started.");
+                    "Python process could not be started.",
+                    null,
+                    stopwatch.ElapsedMilliseconds);
             }
 
             var standardOutputTask =
@@ -82,6 +92,8 @@ public sealed class PythonProcessExperimentExecutor(
             {
                 await process.WaitForExitAsync(
                     cancellationToken);
+                
+                stopwatch.Stop();
             }
             catch (OperationCanceledException)
                 when (cancellationToken.IsCancellationRequested)
@@ -100,16 +112,44 @@ public sealed class PythonProcessExperimentExecutor(
             var standardError =
                 (await standardErrorTask).Trim();
 
+            var outputLines = standardOutput
+                .Split(
+                    Environment.NewLine,
+                    StringSplitOptions.RemoveEmptyEntries);
+
+            const string metricsPrefix = "RESULT_JSON:";
+
+            var metricsLine = outputLines
+                .LastOrDefault(line =>
+                    line.StartsWith(
+                        metricsPrefix,
+                        StringComparison.Ordinal));
+
+            var metricsJson = metricsLine is null
+                ? null
+                : metricsLine[metricsPrefix.Length..];
+
+            var messageLines = outputLines
+                .Where(line =>
+                    !line.StartsWith(
+                        metricsPrefix,
+                        StringComparison.Ordinal));
+
+            var outputMessage = string.Join(
+                Environment.NewLine,
+                messageLines);
+
             if (process.ExitCode == 0)
             {
-                var message = string.IsNullOrWhiteSpace(
-                    standardOutput)
+                var message = string.IsNullOrWhiteSpace(outputMessage)
                     ? "Python process completed successfully."
-                    : standardOutput;
+                    : outputMessage;
 
                 return new ExperimentExecutionResult(
                     true,
-                    message);
+                    message,
+                    metricsJson,
+                    stopwatch.ElapsedMilliseconds);
             }
 
             var errorMessage = string.IsNullOrWhiteSpace(
@@ -119,7 +159,9 @@ public sealed class PythonProcessExperimentExecutor(
 
             return new ExperimentExecutionResult(
                 false,
-                errorMessage);
+                errorMessage,
+                null,
+                stopwatch.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
             when (cancellationToken.IsCancellationRequested)
@@ -128,10 +170,14 @@ public sealed class PythonProcessExperimentExecutor(
         }
         catch (Exception exception)
         {
+            stopwatch.Stop();
+
             return new ExperimentExecutionResult(
                 false,
                 $"Python process could not be executed: " +
-                exception.Message);
+                exception.Message,
+                null,
+                stopwatch.ElapsedMilliseconds);
         }
     }
 

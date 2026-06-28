@@ -182,7 +182,9 @@ public sealed class ExperimentsController : ControllerBase
             request.Attempt,
             request.Succeeded,
             request.ResultMessage,
-            out var finishedExperiment);
+            out var finishedExperiment,
+            request.MetricsJson,
+            request.ExecutionDurationMs);
 
         if (!completed || finishedExperiment is null)
         {

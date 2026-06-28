@@ -261,7 +261,9 @@ public sealed class WorkerService(
             WorkerId = WorkerId,
             Attempt = experiment.Attempt,
             Succeeded = executionResult.Succeeded,
-            ResultMessage = executionResult.ResultMessage
+            ResultMessage = executionResult.ResultMessage,
+            MetricsJson = executionResult.MetricsJson,
+            ExecutionDurationMs = executionResult.ExecutionDurationMs
         };
 
         if (executionResult.Succeeded)

@@ -34,6 +34,8 @@ public sealed class ExperimentRegistry(
             AssignedWorkerId = null,
             FinishedAtUtc = null,
             ResultMessage = null,
+            MetricsJson = null,
+            ExecutionDurationMs = null,
             Attempt = 0
         };
 
@@ -118,7 +120,13 @@ public sealed class ExperimentRegistry(
                     (string?)null)
                 .SetProperty(
                     experiment => experiment.Attempt,
-                    experiment => experiment.Attempt + 1));
+                    experiment => experiment.Attempt + 1)
+                .SetProperty(
+                    experiment => experiment.MetricsJson,
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.ExecutionDurationMs,
+                    (long?)null));
 
         var experiment = dbContext.Experiments
             .AsNoTracking()
@@ -175,7 +183,9 @@ public sealed class ExperimentRegistry(
         int attempt,
         bool succeeded,
         string? resultMessage,
-        out ExperimentResponse? finishedExperiment)
+        out ExperimentResponse? finishedExperiment,
+        string? metricsJson,
+        long? executionDurationMs)
     {
         using var dbContext =
             dbContextFactory.CreateDbContext();
@@ -204,7 +214,13 @@ public sealed class ExperimentRegistry(
                     finishedAtUtc)
                 .SetProperty(
                     experiment => experiment.ResultMessage,
-                    resultMessage));
+                    resultMessage)
+                .SetProperty(
+                    experiment => experiment.MetricsJson,
+                    metricsJson)
+                .SetProperty(
+                    experiment => experiment.ExecutionDurationMs,
+                    executionDurationMs));
 
         var experiment = dbContext.Experiments
             .AsNoTracking()
@@ -316,7 +332,13 @@ public sealed class ExperimentRegistry(
                     (DateTimeOffset?)null)
                 .SetProperty(
                     experiment => experiment.ResultMessage,
-                    (string?)null));
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.MetricsJson,
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.ExecutionDurationMs,
+                    (long?)null));    
             
         var experiment = dbContext.Experiments
             .AsNoTracking()
@@ -384,7 +406,9 @@ public sealed class ExperimentRegistry(
             FinishedAtUtc = experiment.FinishedAtUtc,
             ResultMessage = experiment.ResultMessage,
             SimulateFailure = experiment.SimulateFailure,
-            Attempt = experiment.Attempt
+            Attempt = experiment.Attempt,
+            MetricsJson = experiment.MetricsJson,
+            ExecutionDurationMs = experiment.ExecutionDurationMs
         };
     }
 
