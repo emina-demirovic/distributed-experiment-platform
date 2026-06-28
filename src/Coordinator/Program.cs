@@ -11,7 +11,12 @@ var databasePath = Path.Combine(
 
 builder.Services.AddDbContextFactory<CoordinatorDbContext>(
     options => options.UseSqlite(
-        $"Data Source={databasePath}"));
+        $"Data Source={databasePath}",
+        sqliteOptions => sqliteOptions.MigrationsAssembly(
+            typeof(CoordinatorDbContext).Assembly.FullName)));
+
+Directory.CreateDirectory(
+    Path.GetDirectoryName(databasePath)!);
         
 // Add services to the container.
 
@@ -25,6 +30,18 @@ builder.Services.AddOpenApi();
 
 var app = builder.Build();
         
+using (var scope = app.Services.CreateScope())
+{
+    var dbContextFactory = scope.ServiceProvider
+        .GetRequiredService<
+            IDbContextFactory<CoordinatorDbContext>>();
+
+    await using var dbContext =
+        await dbContextFactory.CreateDbContextAsync();
+
+    await dbContext.Database.MigrateAsync();
+}
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
