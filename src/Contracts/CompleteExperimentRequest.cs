@@ -10,4 +10,11 @@ public sealed class CompleteExperimentRequest
 
     public int Attempt { get; set; }
     
+    public string? MetricsJson { get; set; }
+
+    public long? ExecutionDurationMs { get; set; }
+
+
+
 }
+

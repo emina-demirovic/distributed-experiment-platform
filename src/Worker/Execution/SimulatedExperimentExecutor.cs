@@ -1,4 +1,6 @@
 using Contracts;
+using System.Diagnostics;
+using System.Text.Json;
 
 namespace Worker.Execution;
 
@@ -16,17 +18,36 @@ public sealed class SimulatedExperimentExecutor(
         ExperimentResponse experiment,
         CancellationToken cancellationToken)
     {
+        var stopwatch = Stopwatch.StartNew();
+
         await Task.Delay(
             _executionDuration,
             cancellationToken);
 
-        return experiment.SimulateFailure
-            ? new ExperimentExecutionResult(
+        stopwatch.Stop();
+
+        if (experiment.SimulateFailure)
+        {
+            return new ExperimentExecutionResult(
                 false,
-                "Simulated execution failure.")
-            : new ExperimentExecutionResult(
-                true,
-                "Simulated execution completed successfully.");
+                "Simulated execution failure.",
+                null,
+                stopwatch.ElapsedMilliseconds);
+        }
+
+        var metricsJson = JsonSerializer.Serialize(new
+        {
+            totalReward = 125.5,
+            meanReward = 25.1,
+            episodes = 5,
+            maxSteps = experiment.MaxSteps
+        });
+
+        return new ExperimentExecutionResult(
+            true,
+            "Simulated execution completed successfully.",
+            metricsJson,
+            stopwatch.ElapsedMilliseconds);
     }
 
     private static int ReadPositiveInt(

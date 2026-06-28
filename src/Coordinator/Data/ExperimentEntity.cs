@@ -31,4 +31,8 @@ public sealed class ExperimentEntity
     public int MaxSteps { get; set; }
 
     public int Priority { get; set; }
+
+    public string? MetricsJson { get; set; }
+
+    public long? ExecutionDurationMs { get; set; }
 }
