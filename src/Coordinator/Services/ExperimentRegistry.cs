@@ -245,4 +245,28 @@ public sealed class ExperimentRegistry(
             Attempt = experiment.Attempt
         };
     }
+
+    public int RequeueInterruptedExperiments()
+    {
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        return dbContext.Experiments
+            .Where(experiment =>
+                experiment.Status == ExperimentStatus.Running)
+            .ExecuteUpdate(setters => setters
+                .SetProperty(
+                    experiment => experiment.Status,
+                    ExperimentStatus.Pending)
+                .SetProperty(
+                    experiment => experiment.AssignedWorkerId,
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.FinishedAtUtc,
+                    (DateTimeOffset?)null)
+                .SetProperty(
+                    experiment => experiment.ResultMessage,
+                    (string?)null));
+    }
+    
 }

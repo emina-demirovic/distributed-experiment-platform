@@ -42,6 +42,19 @@ using (var scope = app.Services.CreateScope())
     await dbContext.Database.MigrateAsync();
 }
 
+var experimentRegistry =
+    app.Services.GetRequiredService<ExperimentRegistry>();
+
+var recoveredExperiments =
+    experimentRegistry.RequeueInterruptedExperiments();
+
+if (recoveredExperiments > 0)
+{
+    app.Logger.LogWarning(
+        "{ExperimentCount} interrupted experiment(s) returned to Pending during Coordinator startup.",
+        recoveredExperiments);
+}
+
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
