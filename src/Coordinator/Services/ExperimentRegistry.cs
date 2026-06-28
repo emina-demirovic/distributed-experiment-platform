@@ -1,16 +1,20 @@
-using System.Collections.Concurrent;
 using Contracts;
+using Coordinator.Data;
+using Microsoft.EntityFrameworkCore;
 
 namespace Coordinator.Services;
 
-public sealed class ExperimentRegistry
+public sealed class ExperimentRegistry(
+    IDbContextFactory<CoordinatorDbContext> dbContextFactory)
 {
-    private readonly ConcurrentDictionary<Guid, ExperimentResponse> _experiments =
-        new();
-
-    public ExperimentResponse Create(string name, bool simulateFailure = false)
+    public ExperimentResponse Create(
+        string name,
+        bool simulateFailure = false)
     {
-        var experiment = new ExperimentResponse
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        var experiment = new ExperimentEntity
         {
             Id = Guid.NewGuid(),
             Name = name,
@@ -23,21 +27,38 @@ public sealed class ExperimentRegistry
             Attempt = 0
         };
 
-        _experiments[experiment.Id] = experiment;
+        dbContext.Experiments.Add(experiment);
+        dbContext.SaveChanges();
 
-        return experiment;
+        return ToResponse(experiment);
     }
 
     public IReadOnlyCollection<ExperimentResponse> GetAll()
     {
-        return _experiments.Values
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        return dbContext.Experiments
+            .AsNoTracking()
+            .AsEnumerable()
             .OrderBy(experiment => experiment.CreatedAtUtc)
+            .Select(ToResponse)
             .ToArray();
     }
 
     public ExperimentResponse? GetById(Guid id)
     {
-        return _experiments.GetValueOrDefault(id);
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
+            .SingleOrDefault(experiment =>
+                experiment.Id == id);
+
+        return experiment is null
+            ? null
+            : ToResponse(experiment);
     }
 
     public bool TryAssign(
@@ -45,52 +66,53 @@ public sealed class ExperimentRegistry
         string workerId,
         out ExperimentResponse? assignedExperiment)
     {
-        while (true)
-        {
-            if (!_experiments.TryGetValue(id, out var existingExperiment))
-            {
-                assignedExperiment = null;
-                return false;
-            }
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
 
-            if (existingExperiment.Status != ExperimentStatus.Pending)
-            {
-                assignedExperiment = existingExperiment;
-                return false;
-            }
+        var updatedRows = dbContext.Experiments
+            .Where(experiment =>
+                experiment.Id == id &&
+                experiment.Status == ExperimentStatus.Pending)
+            .ExecuteUpdate(setters => setters
+                .SetProperty(
+                    experiment => experiment.Status,
+                    ExperimentStatus.Running)
+                .SetProperty(
+                    experiment => experiment.AssignedWorkerId,
+                    workerId)
+                .SetProperty(
+                    experiment => experiment.FinishedAtUtc,
+                    (DateTimeOffset?)null)
+                .SetProperty(
+                    experiment => experiment.ResultMessage,
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.Attempt,
+                    experiment => experiment.Attempt + 1));
 
-            var updatedExperiment = new ExperimentResponse
-            {
-                Id = existingExperiment.Id,
-                Name = existingExperiment.Name,
-                Status = ExperimentStatus.Running,
-                CreatedAtUtc = existingExperiment.CreatedAtUtc,
-                AssignedWorkerId = workerId,
-                FinishedAtUtc = null,
-                ResultMessage = null,
-                SimulateFailure = existingExperiment.SimulateFailure,
-                Attempt = existingExperiment.Attempt + 1
-            };
+        assignedExperiment = GetById(id);
 
-            if (_experiments.TryUpdate(
-                id,
-                updatedExperiment,
-                existingExperiment))
-            {
-                assignedExperiment = updatedExperiment;
-                return true;
-            }
-        }
+        return updatedRows == 1;
     }
 
-    public ExperimentResponse? GetNextAssignedToWorker(string workerId)
+    public ExperimentResponse? GetNextAssignedToWorker(
+        string workerId)
     {
-        return _experiments.Values
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
             .Where(experiment =>
                 experiment.AssignedWorkerId == workerId &&
                 experiment.Status == ExperimentStatus.Running)
+            .AsEnumerable()
             .OrderBy(experiment => experiment.CreatedAtUtc)
             .FirstOrDefault();
+
+        return experiment is null
+            ? null
+            : ToResponse(experiment);
     }
 
     public bool TryComplete(
@@ -101,70 +123,77 @@ public sealed class ExperimentRegistry
         string? resultMessage,
         out ExperimentResponse? finishedExperiment)
     {
-        while (true)
-        {
-            if (!_experiments.TryGetValue(id, out var existingExperiment))
-            {
-                finishedExperiment = null;
-                return false;
-            }
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
 
-            if (existingExperiment.Status != ExperimentStatus.Running ||
-                existingExperiment.AssignedWorkerId != workerId || 
-                existingExperiment.Attempt != attempt)
-            {
-                finishedExperiment = existingExperiment;
-                return false;
-            }
+        var finalStatus = succeeded
+            ? ExperimentStatus.Completed
+            : ExperimentStatus.Failed;
 
-            var updatedExperiment = new ExperimentResponse
-            {
-                Id = existingExperiment.Id,
-                Name = existingExperiment.Name,
-                Status = succeeded
-                    ? ExperimentStatus.Completed
-                    : ExperimentStatus.Failed,
-                CreatedAtUtc = existingExperiment.CreatedAtUtc,
-                AssignedWorkerId = existingExperiment.AssignedWorkerId,
-                FinishedAtUtc = DateTimeOffset.UtcNow,
-                ResultMessage = resultMessage,
-                SimulateFailure = existingExperiment.SimulateFailure,
-                Attempt = existingExperiment.Attempt
-            };
+        var finishedAtUtc = DateTimeOffset.UtcNow;
 
-            if (_experiments.TryUpdate(
-                id,
-                updatedExperiment,
-                existingExperiment))
-            {
-                finishedExperiment = updatedExperiment;
-                return true;
-            }
-        }
+        var updatedRows = dbContext.Experiments
+            .Where(experiment =>
+                experiment.Id == id &&
+                experiment.Status == ExperimentStatus.Running &&
+                experiment.AssignedWorkerId == workerId &&
+                experiment.Attempt == attempt)
+            .ExecuteUpdate(setters => setters
+                .SetProperty(
+                    experiment => experiment.Status,
+                    finalStatus)
+                .SetProperty(
+                    experiment => experiment.FinishedAtUtc,
+                    finishedAtUtc)
+                .SetProperty(
+                    experiment => experiment.ResultMessage,
+                    resultMessage));
+
+        finishedExperiment = GetById(id);
+
+        return updatedRows == 1;
     }
-    
+
     public ExperimentResponse? GetNextPending()
     {
-        return _experiments.Values
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
             .Where(experiment =>
                 experiment.Status == ExperimentStatus.Pending)
+            .AsEnumerable()
             .OrderBy(experiment => experiment.CreatedAtUtc)
             .FirstOrDefault();
+
+        return experiment is null
+            ? null
+            : ToResponse(experiment);
     }
 
     public bool HasRunningExperiment(string workerId)
     {
-        return _experiments.Values.Any(experiment =>
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        return dbContext.Experiments.Any(experiment =>
             experiment.Status == ExperimentStatus.Running &&
             experiment.AssignedWorkerId == workerId);
     }
 
     public IReadOnlyCollection<ExperimentResponse> GetRunning()
     {
-        return _experiments.Values
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        return dbContext.Experiments
+            .AsNoTracking()
             .Where(experiment =>
                 experiment.Status == ExperimentStatus.Running)
+            .AsEnumerable()
             .OrderBy(experiment => experiment.CreatedAtUtc)
+            .Select(ToResponse)
             .ToArray();
     }
 
@@ -173,43 +202,47 @@ public sealed class ExperimentRegistry
         string workerId,
         out ExperimentResponse? requeuedExperiment)
     {
-        while (true)
-        {
-            if (!_experiments.TryGetValue(id, out var existingExperiment))
-            {
-                requeuedExperiment = null;
-                return false;
-            }
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
 
-            if (existingExperiment.Status != ExperimentStatus.Running ||
-                existingExperiment.AssignedWorkerId != workerId)
-            {
-                requeuedExperiment = existingExperiment;
-                return false;
-            }
+        var updatedRows = dbContext.Experiments
+            .Where(experiment =>
+                experiment.Id == id &&
+                experiment.Status == ExperimentStatus.Running &&
+                experiment.AssignedWorkerId == workerId)
+            .ExecuteUpdate(setters => setters
+                .SetProperty(
+                    experiment => experiment.Status,
+                    ExperimentStatus.Pending)
+                .SetProperty(
+                    experiment => experiment.AssignedWorkerId,
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.FinishedAtUtc,
+                    (DateTimeOffset?)null)
+                .SetProperty(
+                    experiment => experiment.ResultMessage,
+                    (string?)null));
 
-            var updatedExperiment = new ExperimentResponse
-            {
-                Id = existingExperiment.Id,
-                Name = existingExperiment.Name,
-                Status = ExperimentStatus.Pending,
-                CreatedAtUtc = existingExperiment.CreatedAtUtc,
-                AssignedWorkerId = null,
-                FinishedAtUtc = null,
-                ResultMessage = null,
-                SimulateFailure = existingExperiment.SimulateFailure,
-                Attempt = existingExperiment.Attempt
-            };
+        requeuedExperiment = GetById(id);
 
-            if (_experiments.TryUpdate(
-                id,
-                updatedExperiment,
-                existingExperiment))
-            {
-                requeuedExperiment = updatedExperiment;
-                return true;
-            }
-        }
+        return updatedRows == 1;
     }
-    
+
+    private static ExperimentResponse ToResponse(
+        ExperimentEntity experiment)
+    {
+        return new ExperimentResponse
+        {
+            Id = experiment.Id,
+            Name = experiment.Name,
+            Status = experiment.Status,
+            CreatedAtUtc = experiment.CreatedAtUtc,
+            AssignedWorkerId = experiment.AssignedWorkerId,
+            FinishedAtUtc = experiment.FinishedAtUtc,
+            ResultMessage = experiment.ResultMessage,
+            SimulateFailure = experiment.SimulateFailure,
+            Attempt = experiment.Attempt
+        };
+    }
 }
