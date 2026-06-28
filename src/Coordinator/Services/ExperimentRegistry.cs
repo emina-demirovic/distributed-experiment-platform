@@ -38,6 +38,7 @@ public sealed class ExperimentRegistry(
             ResultMessage = null,
             MetricsJson = null,
             ExecutionDurationMs = null,
+            TimeoutSeconds = timeoutSeconds,
             CancellationRequested = false,
             Attempt = 0
         };
