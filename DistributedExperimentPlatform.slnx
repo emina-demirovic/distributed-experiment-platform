@@ -4,4 +4,7 @@
     <Project Path="src/Coordinator/Coordinator.csproj" />
     <Project Path="src/Worker/Worker.csproj" />
   </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Coordinator.Tests/Coordinator.Tests.csproj" />
+  </Folder>
 </Solution>
