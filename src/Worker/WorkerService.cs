@@ -278,9 +278,6 @@ public sealed class WorkerService(
                 manualCancellation,
                 monitorCancellation.Token);
 
-        var stopwatch = Stopwatch.StartNew();
-
-        ExperimentExecutionResult executionResult;
         var wasCancelled = false;
 
         try
