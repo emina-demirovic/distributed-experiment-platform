@@ -268,9 +268,6 @@ public sealed class WorkerService(
             TimeSpan.FromSeconds(
                 experiment.TimeoutSeconds));
 
-        var stopwatch = Stopwatch.StartNew();
-
-        ExperimentExecutionResult executionResult;
         var cancellationMonitorTask =
             MonitorCancellationAsync(
                 client,
@@ -289,6 +286,22 @@ public sealed class WorkerService(
                 await experimentExecutor.ExecuteAsync(
                     experiment,
                     executionCancellation.Token);
+
+            stopwatch.Stop();
+        }
+        catch (OperationCanceledException)
+            when (!stoppingToken.IsCancellationRequested &&
+                manualCancellation.IsCancellationRequested)
+        {
+            stopwatch.Stop();
+
+            wasCancelled = true;
+
+            executionResult = new ExperimentExecutionResult(
+                false,
+                "Experiment was cancelled by request.",
+                null,
+                stopwatch.ElapsedMilliseconds);
         }
         catch (OperationCanceledException)
             when (!stoppingToken.IsCancellationRequested &&
@@ -302,6 +315,20 @@ public sealed class WorkerService(
                 $"{experiment.TimeoutSeconds} second(s).",
                 null,
                 stopwatch.ElapsedMilliseconds);
+        }
+        finally
+        {
+            monitorCancellation.Cancel();
+
+            try
+            {
+                await cancellationMonitorTask;
+            }
+            catch (OperationCanceledException)
+                when (monitorCancellation.IsCancellationRequested)
+            {
+                // Očekivano gašenje monitora.
+            }
         }
 
         var completionRequest = new CompleteExperimentRequest
