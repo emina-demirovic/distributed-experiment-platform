@@ -282,6 +282,79 @@ public sealed class WorkerServiceIntegrationTests
         }
     }
 
+    [Fact]
+    public async Task WorkerService_ExecutorProgress_PersistsLatestSnapshot()
+    {
+        const string workerId =
+            "worker-service-progress-test";
+
+        using var factory =
+            new CoordinatorWebApplicationFactory();
+
+        using var coordinatorClient =
+            factory.CreateClient();
+
+        using var workerClient =
+            factory.CreateClient();
+
+        var assignedExperiment =
+            await CreateAssignedExperimentAsync(
+                coordinatorClient,
+                workerId,
+                "Worker progress integration test",
+                timeoutSeconds: 30);
+
+        var executor =
+            new ProgressReportingExperimentExecutor();
+
+        using var workerService = CreateWorkerService(
+            workerId,
+            workerClient,
+            executor);
+
+        await workerService.StartAsync(
+            CancellationToken.None);
+
+        try
+        {
+            var completedExperiment =
+                await WaitForStatusAsync(
+                    coordinatorClient,
+                    assignedExperiment.Id,
+                    ExperimentStatus.Completed,
+                    TimeSpan.FromSeconds(10));
+
+            Assert.Equal(
+                7_500,
+                completedExperiment.CurrentStep);
+
+            Assert.Equal(
+                """{"meanReward":35.5,"episodes":8}""",
+                completedExperiment.ProgressMetricsJson);
+
+            Assert.NotNull(
+                completedExperiment.LastProgressAtUtc);
+
+            var events =
+                await coordinatorClient.GetFromJsonAsync<
+                    ExperimentEventResponse[]>(
+                    $"/api/experiments/" +
+                    $"{assignedExperiment.Id}/events");
+
+            Assert.NotNull(events);
+
+            Assert.Equal(
+                new[] { "Created", "Assigned", "Completed" },
+                events.Select(experimentEvent =>
+                    experimentEvent.Type).ToArray());
+        }
+        finally
+        {
+            await workerService.StopAsync(
+                CancellationToken.None);
+        }
+    }
+
     private static async Task<ExperimentResponse>
         CreateAssignedExperimentAsync(
             HttpClient client,
@@ -430,6 +503,10 @@ public sealed class WorkerServiceIntegrationTests
     {
         public Task<ExperimentExecutionResult> ExecuteAsync(
             ExperimentResponse experiment,
+            Func<
+                ExperimentProgressUpdate,
+                CancellationToken,
+                Task> reportProgressAsync,
             CancellationToken cancellationToken)
         {
             return Task.FromResult(
@@ -451,6 +528,10 @@ public sealed class WorkerServiceIntegrationTests
 
         public async Task<ExperimentExecutionResult> ExecuteAsync(
             ExperimentResponse experiment,
+            Func<
+                ExperimentProgressUpdate,
+                CancellationToken,
+                Task> reportProgressAsync,
             CancellationToken cancellationToken)
         {
             Started.TrySetResult(true);
@@ -461,6 +542,37 @@ public sealed class WorkerServiceIntegrationTests
 
             throw new InvalidOperationException(
                 "The blocking executor should have been cancelled.");
+        }
+    }
+
+        private sealed class ProgressReportingExperimentExecutor
+        : IExperimentExecutor
+    {
+        public async Task<ExperimentExecutionResult> ExecuteAsync(
+            ExperimentResponse experiment,
+            Func<
+                ExperimentProgressUpdate,
+                CancellationToken,
+                Task> reportProgressAsync,
+            CancellationToken cancellationToken)
+        {
+            await reportProgressAsync(
+                new ExperimentProgressUpdate(
+                    2_500,
+                    """{"meanReward":15.0,"episodes":4}"""),
+                cancellationToken);
+
+            await reportProgressAsync(
+                new ExperimentProgressUpdate(
+                    7_500,
+                    """{"meanReward":35.5,"episodes":8}"""),
+                cancellationToken);
+
+            return new ExperimentExecutionResult(
+                true,
+                "Progress reporting completed.",
+                """{"totalReward":100}""",
+                250);
         }
     }
 }

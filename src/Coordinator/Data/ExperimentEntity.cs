@@ -34,6 +34,12 @@ public sealed class ExperimentEntity
 
     public string? MetricsJson { get; set; }
 
+    public int? CurrentStep { get; set; }
+
+    public string? ProgressMetricsJson { get; set; }
+
+    public DateTimeOffset? LastProgressAtUtc { get; set; }
+
     public long? ExecutionDurationMs { get; set; }
 
     public bool CancellationRequested { get; set; }

@@ -49,8 +49,9 @@ public sealed class PythonProcessExperimentExecutorTests
 
         var result = await executor.ExecuteAsync(
             experiment,
+            (_, _) => Task.CompletedTask,
             CancellationToken.None);
-
+            
         Assert.False(result.Succeeded);
 
         Assert.Contains(

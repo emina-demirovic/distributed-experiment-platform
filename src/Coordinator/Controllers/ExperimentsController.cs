@@ -140,6 +140,101 @@ public sealed class ExperimentsController : ControllerBase
         return Ok(experiment);
     }
 
+    [HttpPost("{id:guid}/progress")]
+    public ActionResult<ExperimentResponse> ReportProgress(
+        Guid id,
+        ReportExperimentProgressRequest request)
+    {
+        if (string.IsNullOrWhiteSpace(request.WorkerId))
+        {
+            return BadRequest("WorkerId is required.");
+        }
+
+        if (request.Attempt <= 0)
+        {
+            return BadRequest(
+                "A valid execution attempt is required.");
+        }
+
+        if (request.CurrentStep < 0)
+        {
+            return BadRequest(
+                "CurrentStep cannot be negative.");
+        }
+
+        var existingExperiment =
+            _experimentRegistry.GetById(id);
+
+        if (existingExperiment is null)
+        {
+            return NotFound(
+                $"Experiment '{id}' was not found.");
+        }
+
+        if (existingExperiment.Status !=
+            ExperimentStatus.Running)
+        {
+            return Conflict(
+                $"Experiment '{id}' is not currently running.");
+        }
+
+        if (existingExperiment.AssignedWorkerId !=
+            request.WorkerId)
+        {
+            return Conflict(
+                $"Experiment '{id}' is not assigned to worker " +
+                $"'{request.WorkerId}'.");
+        }
+
+        if (existingExperiment.Attempt != request.Attempt)
+        {
+            return Conflict(
+                $"Experiment '{id}' is currently on attempt " +
+                $"{existingExperiment.Attempt}, but progress for " +
+                $"attempt {request.Attempt} was received.");
+        }
+
+        if (existingExperiment.CancellationRequested)
+        {
+            return Conflict(
+                "Progress cannot be reported after cancellation " +
+                "has been requested.");
+        }
+
+        if (request.CurrentStep > existingExperiment.MaxSteps)
+        {
+            return BadRequest(
+                $"CurrentStep cannot be greater than MaxSteps " +
+                $"({existingExperiment.MaxSteps}).");
+        }
+
+        if (existingExperiment.CurrentStep.HasValue &&
+            request.CurrentStep <
+            existingExperiment.CurrentStep.Value)
+        {
+            return Conflict(
+                "CurrentStep cannot move backwards.");
+        }
+
+        var updated =
+            _experimentRegistry.TryReportProgress(
+                id,
+                request.WorkerId,
+                request.Attempt,
+                request.CurrentStep,
+                request.ProgressMetricsJson,
+                out var updatedExperiment);
+
+        if (!updated || updatedExperiment is null)
+        {
+            return Conflict(
+                $"Progress for experiment '{id}' " +
+                "could not be recorded.");
+        }
+
+        return Ok(updatedExperiment);
+    }
+
     [HttpPost("{id:guid}/complete")]
     public ActionResult<ExperimentResponse> Complete(
         Guid id,

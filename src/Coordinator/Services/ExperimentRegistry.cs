@@ -38,6 +38,9 @@ public sealed class ExperimentRegistry(
             ResultMessage = null,
             MetricsJson = null,
             ExecutionDurationMs = null,
+            CurrentStep = null,
+            ProgressMetricsJson = null,
+            LastProgressAtUtc = null,
             CancellationRequested = false,
             Attempt = 0
         };
@@ -131,6 +134,15 @@ public sealed class ExperimentRegistry(
                     experiment => experiment.ExecutionDurationMs,
                     (long?)null)
                 .SetProperty(
+                    experiment => experiment.CurrentStep,
+                    (int?)null)
+                .SetProperty(
+                    experiment => experiment.ProgressMetricsJson,
+                    (string?)null)
+                .SetProperty(
+                    experiment => experiment.LastProgressAtUtc,
+                    (DateTimeOffset?)null)
+                .SetProperty(
                     experiment => experiment.CancellationRequested,
                     false)
                 );
@@ -185,6 +197,53 @@ public sealed class ExperimentRegistry(
             : ToResponse(experiment);
     }
 
+    public bool TryReportProgress(
+        Guid id,
+        string workerId,
+        int attempt,
+        int currentStep,
+        string? progressMetricsJson,
+        out ExperimentResponse? updatedExperiment)
+    {
+        using var dbContext =
+            dbContextFactory.CreateDbContext();
+
+        var lastProgressAtUtc =
+            DateTimeOffset.UtcNow;
+
+        var updatedRows = dbContext.Experiments
+            .Where(experiment =>
+                experiment.Id == id &&
+                experiment.Status == ExperimentStatus.Running &&
+                experiment.AssignedWorkerId == workerId &&
+                experiment.Attempt == attempt &&
+                !experiment.CancellationRequested &&
+                (experiment.CurrentStep == null ||
+                experiment.CurrentStep <= currentStep))
+            .ExecuteUpdate(setters => setters
+                .SetProperty(
+                    experiment => experiment.CurrentStep,
+                    (int?)currentStep)
+                .SetProperty(
+                    experiment => experiment.ProgressMetricsJson,
+                    progressMetricsJson)
+                .SetProperty(
+                    experiment => experiment.LastProgressAtUtc,
+                    lastProgressAtUtc));
+
+        var experiment = dbContext.Experiments
+            .AsNoTracking()
+            .SingleOrDefault(experiment =>
+                experiment.Id == id);
+
+        updatedExperiment =
+            experiment is null
+                ? null
+                : ToResponse(experiment);
+
+        return updatedRows == 1 &&
+            experiment is not null;
+    }
     public bool TryComplete(
         Guid id,
         string workerId,
@@ -383,7 +442,16 @@ public sealed class ExperimentRegistry(
                         (string?)null)
                     .SetProperty(
                         experiment => experiment.ExecutionDurationMs,
-                        (long?)null));
+                        (long?)null)
+                    .SetProperty(
+                        experiment => experiment.CurrentStep,
+                        (int?)null)
+                    .SetProperty(
+                        experiment => experiment.ProgressMetricsJson,
+                        (string?)null)
+                    .SetProperty(
+                        experiment => experiment.LastProgressAtUtc,
+                        (DateTimeOffset?)null));
 
             eventType = ExperimentEventType.Cancelled;
             eventDetails =
@@ -609,7 +677,10 @@ public sealed class ExperimentRegistry(
             MetricsJson = experiment.MetricsJson,
             CancellationRequested = experiment.CancellationRequested,
             ExecutionDurationMs = experiment.ExecutionDurationMs,
-            TimeoutSeconds = experiment.TimeoutSeconds
+            TimeoutSeconds = experiment.TimeoutSeconds,
+            CurrentStep = experiment.CurrentStep,
+            ProgressMetricsJson = experiment.ProgressMetricsJson,
+            LastProgressAtUtc = experiment.LastProgressAtUtc,
         };
     }
 
@@ -634,6 +705,9 @@ public sealed class ExperimentRegistry(
             experiment.AssignedWorkerId = null;
             experiment.FinishedAtUtc = null;
             experiment.ResultMessage = null;
+            experiment.CurrentStep = null;
+            experiment.ProgressMetricsJson = null;
+            experiment.LastProgressAtUtc = null;
 
             dbContext.ExperimentEvents.Add(
                 CreateEvent(
