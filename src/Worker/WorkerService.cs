@@ -275,6 +275,9 @@ public sealed class WorkerService(
                 manualCancellation,
                 monitorCancellation.Token);
 
+        var stopwatch = Stopwatch.StartNew();
+
+        ExperimentExecutionResult executionResult;
         var wasCancelled = false;
 
         try
@@ -282,6 +285,12 @@ public sealed class WorkerService(
             executionResult =
                 await experimentExecutor.ExecuteAsync(
                     experiment,
+                    (progress, cancellationToken) =>
+                        ReportProgressAsync(
+                            client,
+                            experiment,
+                            progress,
+                            cancellationToken),
                     executionCancellation.Token);
 
             stopwatch.Stop();
@@ -381,6 +390,60 @@ public sealed class WorkerService(
             when (stoppingToken.IsCancellationRequested)
         {
             return false;
+        }
+    }
+
+    private async Task ReportProgressAsync(
+        HttpClient client,
+        ExperimentResponse experiment,
+        ExperimentProgressUpdate progress,
+        CancellationToken cancellationToken)
+    {
+        var request = new ReportExperimentProgressRequest
+        {
+            WorkerId = WorkerId,
+            Attempt = experiment.Attempt,
+            CurrentStep = progress.CurrentStep,
+            ProgressMetricsJson = progress.MetricsJson
+        };
+
+        try
+        {
+            var response = await client.PostAsJsonAsync(
+                $"{CoordinatorBaseUrl}/api/experiments/" +
+                $"{experiment.Id}/progress",
+                request,
+                cancellationToken);
+
+            if (!response.IsSuccessStatusCode)
+            {
+                logger.LogWarning(
+                    "Progress update for experiment {ExperimentId} " +
+                    "was rejected with status {StatusCode}.",
+                    experiment.Id,
+                    response.StatusCode);
+
+                return;
+            }
+
+            logger.LogDebug(
+                "Progress reported for experiment {ExperimentId}: " +
+                "{CurrentStep}/{MaxSteps}.",
+                experiment.Id,
+                progress.CurrentStep,
+                experiment.MaxSteps);
+        }
+        catch (OperationCanceledException)
+            when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception exception)
+        {
+            logger.LogWarning(
+                exception,
+                "Progress update failed for experiment {ExperimentId}.",
+                experiment.Id);
         }
     }
 

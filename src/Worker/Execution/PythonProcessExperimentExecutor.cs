@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Text.Json;
 using Contracts;
 
 namespace Worker.Execution;
@@ -18,6 +19,10 @@ public sealed class PythonProcessExperimentExecutor(
 
     public async Task<ExperimentExecutionResult> ExecuteAsync(
         ExperimentResponse experiment,
+        Func<
+            ExperimentProgressUpdate,
+            CancellationToken,
+            Task> reportProgressAsync,
         CancellationToken cancellationToken)
     {
         var stopwatch = Stopwatch.StartNew();
@@ -54,14 +59,17 @@ public sealed class PythonProcessExperimentExecutor(
         startInfo.ArgumentList.Add(experiment.Environment);
 
         startInfo.ArgumentList.Add("--seed");
-        startInfo.ArgumentList.Add(experiment.Seed.ToString());
+        startInfo.ArgumentList.Add(
+            experiment.Seed.ToString());
 
         startInfo.ArgumentList.Add("--max-steps");
-        startInfo.ArgumentList.Add(experiment.MaxSteps.ToString());
+        startInfo.ArgumentList.Add(
+            experiment.MaxSteps.ToString());
 
         if (experiment.SimulateFailure)
         {
-            startInfo.ArgumentList.Add("--simulate-failure");
+            startInfo.ArgumentList.Add(
+                "--simulate-failure");
         }
 
         using var process = new Process
@@ -83,16 +91,20 @@ public sealed class PythonProcessExperimentExecutor(
             }
 
             var standardOutputTask =
-                process.StandardOutput.ReadToEndAsync();
+                ReadStandardOutputAsync(
+                    process.StandardOutput,
+                    reportProgressAsync,
+                    cancellationToken);
 
             var standardErrorTask =
-                process.StandardError.ReadToEndAsync();
+                process.StandardError.ReadToEndAsync(
+                    cancellationToken);
 
             try
             {
                 await process.WaitForExitAsync(
                     cancellationToken);
-                
+
                 stopwatch.Stop();
             }
             catch (OperationCanceledException)
@@ -100,62 +112,39 @@ public sealed class PythonProcessExperimentExecutor(
             {
                 if (!process.HasExited)
                 {
-                    process.Kill(entireProcessTree: true);
+                    process.Kill(
+                        entireProcessTree: true);
                 }
 
                 throw;
             }
 
-            var standardOutput =
-                (await standardOutputTask).Trim();
+            var output =
+                await standardOutputTask;
 
             var standardError =
                 (await standardErrorTask).Trim();
 
-            var outputLines = standardOutput
-                .Split(
-                    Environment.NewLine,
-                    StringSplitOptions.RemoveEmptyEntries);
-
-            const string metricsPrefix = "RESULT_JSON:";
-
-            var metricsLine = outputLines
-                .LastOrDefault(line =>
-                    line.StartsWith(
-                        metricsPrefix,
-                        StringComparison.Ordinal));
-
-            var metricsJson = metricsLine is null
-                ? null
-                : metricsLine[metricsPrefix.Length..];
-
-            var messageLines = outputLines
-                .Where(line =>
-                    !line.StartsWith(
-                        metricsPrefix,
-                        StringComparison.Ordinal));
-
-            var outputMessage = string.Join(
-                Environment.NewLine,
-                messageLines);
-
             if (process.ExitCode == 0)
             {
-                var message = string.IsNullOrWhiteSpace(outputMessage)
-                    ? "Python process completed successfully."
-                    : outputMessage;
+                var message =
+                    string.IsNullOrWhiteSpace(
+                        output.Message)
+                        ? "Python process completed successfully."
+                        : output.Message;
 
                 return new ExperimentExecutionResult(
                     true,
                     message,
-                    metricsJson,
+                    output.MetricsJson,
                     stopwatch.ElapsedMilliseconds);
             }
 
-            var errorMessage = string.IsNullOrWhiteSpace(
-                standardError)
-                ? $"Python process exited with code {process.ExitCode}."
-                : standardError;
+            var errorMessage =
+                string.IsNullOrWhiteSpace(standardError)
+                    ? $"Python process exited with code " +
+                    $"{process.ExitCode}."
+                    : standardError;
 
             return new ExperimentExecutionResult(
                 false,
@@ -174,12 +163,124 @@ public sealed class PythonProcessExperimentExecutor(
 
             return new ExperimentExecutionResult(
                 false,
-                $"Python process could not be executed: " +
+                "Python process could not be executed: " +
                 exception.Message,
                 null,
                 stopwatch.ElapsedMilliseconds);
         }
     }
+
+    private static async Task<PythonOutput>
+        ReadStandardOutputAsync(
+            StreamReader reader,
+            Func<
+                ExperimentProgressUpdate,
+                CancellationToken,
+                Task> reportProgressAsync,
+            CancellationToken cancellationToken)
+    {
+        const string resultPrefix = "RESULT_JSON:";
+        const string progressPrefix = "PROGRESS_JSON:";
+
+        var messageLines = new List<string>();
+        string? metricsJson = null;
+
+        while (true)
+        {
+            var line = await reader.ReadLineAsync(
+                cancellationToken);
+
+            if (line is null)
+            {
+                break;
+            }
+
+            if (line.StartsWith(
+                resultPrefix,
+                StringComparison.Ordinal))
+            {
+                metricsJson =
+                    line[resultPrefix.Length..];
+
+                continue;
+            }
+
+            if (line.StartsWith(
+                progressPrefix,
+                StringComparison.Ordinal))
+            {
+                var progressJson =
+                    line[progressPrefix.Length..];
+
+                if (TryParseProgress(
+                    progressJson,
+                    out var progress))
+                {
+                    await reportProgressAsync(
+                        progress,
+                        cancellationToken);
+                }
+
+                continue;
+            }
+
+            messageLines.Add(line);
+        }
+
+        return new PythonOutput(
+            string.Join(
+                Environment.NewLine,
+                messageLines),
+            metricsJson);
+    }
+
+    private static bool TryParseProgress(
+        string progressJson,
+        out ExperimentProgressUpdate progress)
+    {
+        try
+        {
+            using var document =
+                JsonDocument.Parse(progressJson);
+
+            var root = document.RootElement;
+
+            if (!root.TryGetProperty(
+                    "currentStep",
+                    out var currentStepElement) ||
+                !currentStepElement.TryGetInt32(
+                    out var currentStep))
+            {
+                progress = default!;
+                return false;
+            }
+
+            string? metricsJson = null;
+
+            if (root.TryGetProperty(
+                "metrics",
+                out var metricsElement))
+            {
+                metricsJson =
+                    metricsElement.GetRawText();
+            }
+
+            progress = new ExperimentProgressUpdate(
+                currentStep,
+                metricsJson);
+
+            return true;
+        }
+        catch (JsonException)
+        {
+            progress = default!;
+            return false;
+        }
+    }
+
+    private sealed record PythonOutput(
+        string Message,
+        string? MetricsJson);
 
     private static string ResolveScriptPath(
         string configuredPath)

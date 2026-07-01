@@ -25,7 +25,27 @@ def main() -> int:
         flush=True,
     )
 
-    time.sleep(2)
+    progress_update_count = 4
+
+    for update_index in range(1, progress_update_count + 1):
+        time.sleep(0.5)
+
+        current_step = (
+            args.max_steps * update_index // progress_update_count
+        )
+
+        progress = {
+            "currentStep": current_step,
+            "metrics": {
+                "mean_reward": 7.5 * update_index,
+                "episodes": update_index,
+            },
+        }
+
+        print(
+            "PROGRESS_JSON:" + json.dumps(progress),
+            flush=True,
+        )
 
     if args.simulate_failure:
         print(

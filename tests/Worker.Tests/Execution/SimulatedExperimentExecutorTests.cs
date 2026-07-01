@@ -15,8 +15,16 @@ public sealed class SimulatedExperimentExecutorTests
         var experiment = CreateExperiment(
             simulateFailure: false);
 
+        var progressUpdates =
+            new List<ExperimentProgressUpdate>();
+            
         var result = await executor.ExecuteAsync(
             experiment,
+            (progress, _) =>
+            {
+                progressUpdates.Add(progress);
+                return Task.CompletedTask;
+            },
             CancellationToken.None);
 
         Assert.True(result.Succeeded);
@@ -32,6 +40,23 @@ public sealed class SimulatedExperimentExecutorTests
             JsonDocument.Parse(result.MetricsJson);
 
         var metrics = metricsDocument.RootElement;
+
+        Assert.Equal(5, progressUpdates.Count);
+
+        Assert.Equal(
+            experiment.MaxSteps,
+            progressUpdates[^1].CurrentStep);
+
+        Assert.NotNull(
+            progressUpdates[^1].MetricsJson);
+
+        Assert.True(
+            progressUpdates
+                .Select(progress => progress.CurrentStep)
+                .SequenceEqual(
+                    progressUpdates
+                        .Select(progress => progress.CurrentStep)
+                        .OrderBy(step => step)));
 
         Assert.Equal(
             125.5,
@@ -60,6 +85,7 @@ public sealed class SimulatedExperimentExecutorTests
 
         var result = await executor.ExecuteAsync(
             experiment,
+            (_, _) => Task.CompletedTask,
             CancellationToken.None);
 
         Assert.False(result.Succeeded);
@@ -86,8 +112,9 @@ public sealed class SimulatedExperimentExecutorTests
 
         await Assert.ThrowsAnyAsync<OperationCanceledException>(
             () => executor.ExecuteAsync(
-                experiment,
-                cancellation.Token));
+            experiment,
+            (_, _) => Task.CompletedTask,
+            cancellation.Token));
     }
 
     private static SimulatedExperimentExecutor CreateExecutor()
